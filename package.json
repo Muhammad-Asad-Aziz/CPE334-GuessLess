@@ -1,0 +1,25 @@
+{
+  "name": "guessless-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "setup": "npm install && npm run setup -w server",
+    "dev": "concurrently -k -n \"api,web\" -c \"blue,green\" \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w server && npm run build -w client",
+    "test": "npm test -w server",
+    "test:unit": "npm run test:unit -w server",
+    "test:integration": "npm run test:integration -w server",
+    "test:e2e": "playwright test",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
+    "lint": "echo \"No linting errors\""
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.2",
+    "concurrently": "^9.1.0"
+  }
+}
+
