@@ -11,10 +11,12 @@
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration tests/health.test.ts",
+    "test:perf": "npm run build && tsx tests/perf/benchmark.ts",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "seed:benchmark": "tsx prisma/seed-benchmark.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
