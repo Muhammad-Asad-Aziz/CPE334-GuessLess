@@ -1,0 +1,9 @@
+dialog.owner-modal-dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.owner-modal-dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background-color: rgba(17, 24, 39, 0.55);
+}
