@@ -7,6 +7,10 @@ import { AdminHomePage } from './pages/AdminHomePage';
 import { MySurveysPage } from './pages/owner/MySurveysPage';
 import { NewSurveyPage } from './pages/owner/NewSurveyPage';
 import { SurveyDetailPage } from './pages/owner/SurveyDetailPage';
+import { AvailableSurveysPage } from './pages/respondent/AvailableSurveysPage';
+import { TakeSurveyPage } from './pages/respondent/TakeSurveyPage';
+import { MyResponsesPage } from './pages/respondent/MyResponsesPage';
+import { SubmissionDetailPage } from './pages/respondent/SubmissionDetailPage';
 import { UserInfo } from './components/Navbar';
 import { apiFetch, authStorage } from './lib/apiClient';
 
@@ -27,30 +31,6 @@ function HomePage() {
           Sign In
         </Link>
       </div>
-    </div>
-  );
-}
-
-function AvailableSurveysPage() {
-  return (
-    <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">Available Surveys</h2>
-      <EmptyState
-        title="No open surveys found"
-        description="Check back later for newly published surveys."
-      />
-    </div>
-  );
-}
-
-function MyResponsesPage() {
-  return (
-    <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">My Submissions</h2>
-      <EmptyState
-        title="No responses yet"
-        description="Surveys you complete will appear here with confirmation dates."
-      />
     </div>
   );
 }
@@ -134,10 +114,26 @@ export function App() {
             }
           />
           <Route
+            path="/available/:surveyId"
+            element={
+              <ProtectedRoute>
+                <TakeSurveyPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/my-responses"
             element={
               <ProtectedRoute>
                 <MyResponsesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/my-responses/:surveyId"
+            element={
+              <ProtectedRoute>
+                <SubmissionDetailPage />
               </ProtectedRoute>
             }
           />

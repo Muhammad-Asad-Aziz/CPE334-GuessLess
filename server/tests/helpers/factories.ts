@@ -153,13 +153,65 @@ export async function createSurveyWithQuestions(
   });
 }
 
+export async function createQuestion(
+  surveyId: string,
+  overrides: {
+    position?: number;
+    type?: 'SINGLE_CHOICE' | 'RATING' | 'MULTIPLE_CHOICE' | 'FREE_TEXT';
+    text?: string;
+    required?: boolean;
+  } = {}
+) {
+  return prisma.question.create({
+    data: {
+      surveyId,
+      position: overrides.position ?? 1,
+      type: overrides.type ?? 'SINGLE_CHOICE',
+      text: overrides.text ?? 'Test question?',
+      required: overrides.required ?? true,
+    },
+  });
+}
+
+export async function createOption(
+  questionId: string,
+  overrides: {
+    position?: number;
+    text?: string;
+  } = {}
+) {
+  return prisma.option.create({
+    data: {
+      questionId,
+      position: overrides.position ?? 1,
+      text: overrides.text ?? 'Option 1',
+    },
+  });
+}
+
+export async function createParticipation(
+  surveyId: string,
+  respondentId: string,
+  overrides: {
+    participatedDay?: Date;
+  } = {}
+) {
+  return prisma.participation.create({
+    data: {
+      surveyId,
+      respondentId,
+      participatedDay: overrides.participatedDay ?? new Date(),
+    },
+  });
+}
+
 export interface FactoryAnswerInput {
   questionId: string;
   ratingValue?: number;
   optionId?: string;
 }
 
-export async function createResponse(
+async function createResponseWithAnswersImpl(
   surveyId: string,
   respondentId: string,
   answers: FactoryAnswerInput[] = [],
@@ -207,6 +259,65 @@ export async function createResponse(
       },
     });
   });
+}
+
+async function createResponseRowImpl(
+  surveyId: string,
+  overrides: {
+    respondentId?: string | null;
+    mode?: 'IDENTIFIED' | 'ANONYMOUS';
+    submittedDay?: Date;
+    submittedAt?: Date | null;
+  } = {}
+) {
+  const mode = overrides.mode ?? 'IDENTIFIED';
+  const now = new Date();
+  return prisma.response.create({
+    data: {
+      surveyId,
+      mode,
+      respondentId: mode === 'IDENTIFIED' ? (overrides.respondentId ?? null) : null,
+      submittedDay: overrides.submittedDay ?? now,
+      submittedAt:
+        mode === 'IDENTIFIED'
+          ? overrides.submittedAt !== undefined
+            ? overrides.submittedAt
+            : now
+          : null,
+    },
+  });
+}
+
+export function createResponse(
+  surveyId: string,
+  respondentId: string,
+  answers?: FactoryAnswerInput[],
+  submittedAt?: Date
+): ReturnType<typeof createResponseWithAnswersImpl>;
+export function createResponse(
+  surveyId: string,
+  overrides?: {
+    respondentId?: string | null;
+    mode?: 'IDENTIFIED' | 'ANONYMOUS';
+    submittedDay?: Date;
+    submittedAt?: Date | null;
+  }
+): ReturnType<typeof createResponseRowImpl>;
+export function createResponse(
+  surveyId: string,
+  respondentIdOrOverrides: any = {},
+  answers: FactoryAnswerInput[] = [],
+  submittedAt: Date = new Date()
+) {
+  if (typeof respondentIdOrOverrides === 'string') {
+    return createResponseWithAnswersImpl(
+      surveyId,
+      respondentIdOrOverrides,
+      answers,
+      submittedAt
+    );
+  }
+  return createResponseRowImpl(surveyId, respondentIdOrOverrides);
 }
 
 

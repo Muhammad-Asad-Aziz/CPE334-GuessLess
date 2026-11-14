@@ -6,6 +6,9 @@ import { errorHandler } from './middleware/errorHandler';
 import { healthRouter } from './routes/health';
 import { authRouter } from './routes/auth';
 import { surveysRouter } from './routes/surveys';
+import { availableSurveysRouter } from './routes/availableSurveys';
+import { responsesRouter } from './routes/responses';
+import { myResponsesRouter } from './routes/myResponses';
 import { NotFoundError } from './errors';
 import { logger } from './lib/logger';
 
@@ -42,6 +45,17 @@ app.use('/api/auth', authRouter);
 
 // Owner survey routes (F-02)
 app.use('/api/v1/surveys', surveysRouter);
+
+// Respondent Available Surveys routes (F-03, FR-08)
+app.use('/api/v1/available-surveys', availableSurveysRouter);
+app.use('/api/available-surveys', availableSurveysRouter);
+
+// Respondent Submissions & History routes (F-03, FR-03, FR-09)
+app.use('/api/v1', responsesRouter);
+app.use('/api', responsesRouter);
+
+app.use('/api/v1', myResponsesRouter);
+app.use('/api', myResponsesRouter);
 
 // Catch-all 404 handler
 app.use((req, _res, next) => {

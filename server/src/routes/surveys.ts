@@ -14,8 +14,6 @@ import { SurveyService } from '../services/SurveyService';
 
 export const surveysRouter = Router();
 
-surveysRouter.use(authenticate, requireRole('SURVEY_OWNER'));
-
 function validateSurveyIdParam(req: Request, _res: Response, next: NextFunction) {
   const parsed = uuidParamSchema.safeParse(req.params);
   if (!parsed.success) {
@@ -27,6 +25,8 @@ function validateSurveyIdParam(req: Request, _res: Response, next: NextFunction)
 // POST /api/v1/surveys
 surveysRouter.post(
   '/',
+  authenticate,
+  requireRole('SURVEY_OWNER'),
   validate(createSurveySchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -41,6 +41,8 @@ surveysRouter.post(
 // GET /api/v1/surveys
 surveysRouter.get(
   '/',
+  authenticate,
+  requireRole('SURVEY_OWNER'),
   validate(listSurveysQuerySchema, 'query'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -56,6 +58,8 @@ surveysRouter.get(
 // GET /api/v1/surveys/:id
 surveysRouter.get(
   '/:id',
+  authenticate,
+  requireRole('SURVEY_OWNER'),
   validateSurveyIdParam,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -70,6 +74,8 @@ surveysRouter.get(
 // POST /api/v1/surveys/:id/publish
 surveysRouter.post(
   '/:id/publish',
+  authenticate,
+  requireRole('SURVEY_OWNER'),
   validateSurveyIdParam,
   validate(emptyBodySchema),
   async (req: Request, res: Response, next: NextFunction) => {
@@ -85,6 +91,8 @@ surveysRouter.post(
 // POST /api/v1/surveys/:id/close
 surveysRouter.post(
   '/:id/close',
+  authenticate,
+  requireRole('SURVEY_OWNER'),
   validateSurveyIdParam,
   validate(emptyBodySchema),
   async (req: Request, res: Response, next: NextFunction) => {
