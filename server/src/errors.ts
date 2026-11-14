@@ -90,3 +90,12 @@ export class InternalError extends AppError {
   }
 }
 
+/**
+ * Maps known Prisma errors (e.g. P2002 unique constraint) to domain AppErrors.
+ */
+export function mapPrismaError(err: unknown): Error {
+  // Stub for Phase A (Red TDD)
+  return err as Error;
+}
+
+
