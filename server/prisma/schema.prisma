@@ -1,0 +1,178 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  RESPONDENT
+  SURVEY_OWNER
+  ADMIN
+}
+
+enum SurveyStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+}
+
+enum ResponseMode {
+  IDENTIFIED
+  ANONYMOUS
+}
+
+enum Eligibility {
+  ALL
+  SELECTED
+}
+
+enum QuestionType {
+  SINGLE_CHOICE
+  RATING
+  MULTIPLE_CHOICE
+  FREE_TEXT
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  displayName  String   @db.VarChar(100)
+  passwordHash String
+  role         Role
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  surveys        Survey[]
+  responses      Response[]
+  participations Participation[]
+  eligibleFor    SurveyEligibility[]
+}
+
+model Survey {
+  id          String       @id @default(uuid()) @db.Uuid
+  ownerId     String       @db.Uuid
+  title       String       @default("") @db.VarChar(120)
+  description String       @default("") @db.VarChar(1000)
+  mode        ResponseMode @default(IDENTIFIED)
+  status      SurveyStatus @default(DRAFT)
+  eligibility Eligibility  @default(ALL)
+  publishedAt DateTime?
+  closeAt     DateTime?
+  closedAt    DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  owner          User                @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  questions      Question[]
+  responses      Response[]
+  participations Participation[]
+  eligibleUsers  SurveyEligibility[]
+
+  @@unique([id, mode])
+  @@index([ownerId, status])
+  @@index([status])
+}
+
+model Question {
+  id       String       @id @default(uuid()) @db.Uuid
+  surveyId String       @db.Uuid
+  position Int
+  type     QuestionType
+  text     String       @db.VarChar(300)
+  required Boolean      @default(true)
+
+  survey  Survey   @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  options Option[]
+  answers Answer[]
+
+  @@unique([surveyId, position])
+}
+
+model Option {
+  id         String @id @default(uuid()) @db.Uuid
+  questionId String @db.Uuid
+  position   Int
+  text       String @db.VarChar(100)
+
+  question   Question          @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  selections AnswerSelection[]
+
+  @@unique([questionId, position])
+}
+
+model Response {
+  id           String       @id @default(uuid()) @db.Uuid
+  surveyId     String       @db.Uuid
+  mode         ResponseMode
+  respondentId String?      @db.Uuid
+  submittedDay DateTime     @db.Date
+  submittedAt  DateTime?
+
+  survey     Survey   @relation(fields: [surveyId, mode], references: [id, mode], onDelete: Restrict, onUpdate: Restrict)
+  respondent User?    @relation(fields: [respondentId], references: [id], onDelete: Restrict)
+  answers    Answer[]
+
+  @@unique([surveyId, respondentId])
+  @@index([surveyId, submittedDay])
+}
+
+model Answer {
+  id          String  @id @default(uuid()) @db.Uuid
+  responseId  String  @db.Uuid
+  questionId  String  @db.Uuid
+  ratingValue Int?
+  textValue   String? @db.VarChar(1000)
+
+  response   Response          @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  question   Question          @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  selections AnswerSelection[]
+
+  @@unique([responseId, questionId])
+  @@index([questionId])
+}
+
+model AnswerSelection {
+  answerId String @db.Uuid
+  optionId String @db.Uuid
+
+  answer Answer @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  option Option @relation(fields: [optionId], references: [id], onDelete: Restrict)
+
+  @@id([answerId, optionId])
+  @@index([optionId])
+}
+
+model Participation {
+  id              String   @id @default(uuid()) @db.Uuid
+  surveyId        String   @db.Uuid
+  respondentId    String   @db.Uuid
+  participatedDay DateTime @db.Date
+
+  survey     Survey @relation(fields: [surveyId], references: [id], onDelete: Restrict)
+  respondent User   @relation(fields: [respondentId], references: [id], onDelete: Restrict)
+
+  @@unique([surveyId, respondentId])
+  @@index([respondentId])
+}
+
+model SurveyEligibility {
+  surveyId     String @db.Uuid
+  respondentId String @db.Uuid
+
+  survey     Survey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  respondent User   @relation(fields: [respondentId], references: [id], onDelete: Cascade)
+
+  @@id([surveyId, respondentId])
+}
+
+model RevokedToken {
+  jti       String   @id
+  expiresAt DateTime
+  revokedAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
