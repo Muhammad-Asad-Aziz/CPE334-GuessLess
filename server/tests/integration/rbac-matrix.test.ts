@@ -29,15 +29,16 @@ describe('TEST-F01-05: RBAC Matrix & Strict Body Guard (AC-F01-05, BR-08, NFR-05
       expect(loginSpec).toBeDefined();
       expect(loginSpec?.method).toBe('POST');
 
-      const f02Routes = [
+      const f02AndF04Routes = [
         { method: 'POST', path: '/api/v1/surveys' },
         { method: 'GET', path: '/api/v1/surveys' },
         { method: 'GET', path: '/api/v1/surveys/:id' },
         { method: 'POST', path: '/api/v1/surveys/:id/publish' },
         { method: 'POST', path: '/api/v1/surveys/:id/close' },
+        { method: 'GET', path: '/api/v1/surveys/:id/summary' },
       ] as const;
 
-      for (const expected of f02Routes) {
+      for (const expected of f02AndF04Routes) {
         const spec = PROTECTED_ROUTES.find(
           (r) => r.method === expected.method && r.path === expected.path
         );
@@ -276,6 +277,14 @@ describe('TEST-F01-05: RBAC Matrix & Strict Body Guard (AC-F01-05, BR-08, NFR-05
           name: 'POST /api/v1/surveys/:id/close',
           send: (token) => {
             const req = request(app).post(`/api/v1/surveys/${draftSurvey.id}/close`);
+            return token ? req.set('Authorization', `Bearer ${token}`) : req;
+          },
+          expectedOwnerStatus: 200,
+        },
+        {
+          name: 'GET /api/v1/surveys/:id/summary',
+          send: (token) => {
+            const req = request(app).get(`/api/v1/surveys/${draftSurvey.id}/summary`);
             return token ? req.set('Authorization', `Bearer ${token}`) : req;
           },
           expectedOwnerStatus: 200,

@@ -11,6 +11,7 @@ import {
   type ListSurveysQuery,
 } from '../schemas/surveySchema';
 import { SurveyService } from '../services/SurveyService';
+import { SummaryService } from '../services/SummaryService';
 
 export const surveysRouter = Router();
 
@@ -65,6 +66,22 @@ surveysRouter.get(
     try {
       const survey = await SurveyService.getById(req.user!.id, req.params.id);
       return res.status(200).json({ data: survey });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /api/v1/surveys/:id/summary
+surveysRouter.get(
+  '/:id/summary',
+  authenticate,
+  requireRole('SURVEY_OWNER'),
+  validateSurveyIdParam,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const summary = await SummaryService.getSummary(req.user!.id, req.params.id);
+      return res.status(200).json({ data: summary });
     } catch (err) {
       next(err);
     }

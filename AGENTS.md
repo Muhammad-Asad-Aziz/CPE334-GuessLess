@@ -59,9 +59,31 @@ At the start of every session, read this file and the relevant specification fil
 
 ## 5. Current Context Handoff
 
-- **Current Sprint:** Sprint 1 (`sprint-1` staging branch)
+- **Current Sprint:** Sprint 1 (`sprint1-staging` branch in Git; referred to as `sprint-1` in docs)
 - **Active Baseline:** `v1.0` (`docs/srs.md`, `docs/features.md`, `docs/traceability.md`, `docs/system-sds.md`, `docs/sprints/plan.md`, `docs/sprints/sprint-1/*`)
-- **Last Completed:** Issue #2 (`feat/2-project-scaffold` — monorepo scaffold, 10-model Prisma schema & check constraint migrations `0001` and `0002` applied to dev/test DBs, fail-fast config validation, Express shell & `/api/v1/health`, Zen Green responsive client shell, Vitest/Supertest harness with 20/20 passing tests)
-- **Next Up:** Parallel Wave 1:
-  - Issue #3: `F-01` Authentication, Session Revocation & Role Guard (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/me`, `authenticate` & `requireRole` middleware, `AC-F01-01`–`AC-F01-05`, `TEST-F01-01`–`TEST-F01-05`)
-  - Issue #4: `F-02` Survey Lifecycle Pure Domain Rules TDD (`domain/surveyLifecycle.ts`, `publishChecks`, `canTransition`, `BR-03`/`BR-04`, `TEST-F02-04`, `TEST-F02-07`) and Survey Owner UI baseline
+- **Last Completed:** Issue #7 (`F-04` Aggregate Survey Results Summary) implemented & locally verified on `feat/7-f04-summary-api` (ready for PR into `sprint1-staging`; `20` Vitest files / `191` tests passing, `6/6` `owner-summary.spec.ts` E2E passing). Issues #1–#6 integrated on `sprint1-staging` (`8be9c21`).
+
+### Completed Work (Issues #1–#7)
+
+- **Issue #1 (`docs/baseline-and-sprint1-contracts`):** Product baseline (`v1.0`) and approved Sprint 1 contracts (`F-01`–`F-04`, `nfr-test-specification.md`, `definition-of-done.md`).
+- **Issue #2 (`feat/2-project-scaffold`):** Monorepo scaffold, 10-model Prisma schema & migrations (`0001`, `0002` check constraints), fail-fast `config/`, Express `/api/v1/health`, Zen Green layout/components, and Vitest/Supertest harness.
+- **Issue #3 (`feat/3-f01-authentication` — `F-01`):** `AuthService.ts`, `routes/auth.ts` (`login`, `logout`, `me`), `authenticate` + `requireRole` middleware, `RevokedToken` revocation, `prisma/seed.ts`, `LoginPage.tsx`, `AdminHomePage.tsx`, `Navbar.tsx`, plus `auth.test.ts`, `nfr-passwords.test.ts`, `rbac-matrix.test.ts`, and `auth.spec.ts`.
+- **Issue #4 (`feat/4-domain-engine-and-owner-ui` — `F-02`/`F-04` domain + owner UI):** Pure domain rules (`surveyLifecycle.ts`, `effectiveStatus.ts`, `summaryMath.ts` with `buildSummary`, `calendarDay.ts`), strict `createSurveySchema`, and owner UI pages (`MySurveysPage.tsx`, `NewSurveyPage.tsx`, `SurveyDetailPage.tsx`, `SummaryPage.tsx`, `ownerUtils.ts`).
+- **Issue #5 (`feat/5-f03-respondent-responses` — `F-03`):** `validateAnswers.ts`, `ResponseService.ts`, `routes/availableSurveys.ts`, `routes/responses.ts`, `routes/myResponses.ts`, `mapPrismaError` (`errors.ts`), respondent UI (`AvailableSurveysPage.tsx`, `TakeSurveyPage.tsx`, `MyResponsesPage.tsx`, `SubmissionDetailPage.tsx`), `seed.ts` relation cleanup, plus `validateAnswers.test.ts`, `errorMapping.test.ts`, `available-surveys.test.ts`, `responses.test.ts`, `my-responses.test.ts`, `nfr-concurrency.test.ts`, and `respondent-submit.spec.ts`.
+- **Issue #6 (`feat/6-f02-survey-lifecycle-api` — `F-02` API + UI wiring):** `SurveyService.ts`, `routes/surveys.ts`, expanded `surveySchema.ts`, owner route wiring in `client/src/App.tsx`, overloaded `createResponse` in `factories.ts`, plus `surveys.test.ts`, `surveys.ownership.test.ts`, extended `rbac-matrix.test.ts`, and `owner-survey.spec.ts`.
+- **Issue #7 (`feat/7-f04-summary-api` — `F-04` Summary API + UI wiring, pending PR into `sprint1-staging`):** `SummaryService.ts` (SQL count/`groupBy` aggregates passed to `buildSummary`), per-route `GET /api/v1/surveys/:id/summary` in `routes/surveys.ts`, `/my-surveys/:surveyId/summary` route wiring in `client/src/App.tsx` to `SummaryPage.tsx`, plus `tests/integration/summary.test.ts` (`TEST-F04-02`–`04`), extended `rbac-matrix.test.ts` (route `#8`), and `tests/e2e/owner-summary.spec.ts` (`6/6` passing across `360`/`768`/`1280` px).
+
+### Codebase Conventions Established (Important for Upcoming Issues)
+
+- **Per-route role guards on `/api/v1/surveys`:** `surveysRouter`, `responsesRouter`, and `myResponsesRouter` share the `/api/v1/surveys` prefix in `server/src/app.ts`. Always attach `authenticate` and `requireRole(...)` **per route** (never router-level `.use(...)` on `surveysRouter`) so `F-02`, `F-03`, and `F-04` sub-routes never block each other with `403`.
+- **Implemented Sprint 1 route & helper baseline:** All `PROTECTED_ROUTES` `#1`–`#14` (`tests/helpers/routes.ts`) are implemented (`F-01`–`F-04`), and overloaded `createResponse` (`tests/helpers/factories.ts`: `(surveyId, respondentId, answers?, submittedAt?)` or `(surveyId, overrides?)`) is available.
+- **E2E test isolation:** `GET /api/v1/available-surveys` sorts `publishedAt DESC`. `owner-summary.spec.ts` creates/cleans isolated surveys and synthetic respondents per test; `respondent-submit.spec.ts` and `owner-survey.spec.ts` (`TEST-F02-05`) require a clean re-seed (`npm run seed`), zero `owner2` dev-DB surveys, and non-overlapping `resp1` execution when running the full Playwright suite.
+
+### Next Up (Wave 3 — Issues #8 & #9)
+
+- **Issue #8 (Cross-Feature Integration):** End-to-end HTTP verification across `F-02` + `F-03` + `F-04` (`TEST-F02-03`/`TEST-F02-06`/`TEST-F04-02`, including `POST /api/v1/surveys/:id/responses` -> `GET /api/v1/surveys/:id/summary`).
+- **Issue #9 (Sprint 1 NFR Verification):** Remaining Sprint 1 NFR checks (`TEST-NFR-01` 1,000-response p95 benchmark, `TEST-NFR-03` token auth matrix, `TEST-NFR-04` responsive checks + screenshots, `TEST-NFR-05` Express-vs-`routes.ts` audit, `TEST-NFR-07` restart durability, `TEST-NFR-08` safe error handling, `TEST-NFR-09` `gitleaks`, `TEST-NFR-10` clean walkthrough).
+
+### Remaining After Wave 3 (Wave 4 — Issue #10)
+
+- **Issue #10 (Sprint 1 Closeout & Release):** Record all final execution results in `docs/traceability.md` Section 5 & update `docs/features.md` statuses, open reviewed Release PR `sprint1-staging` → `main`, and tag `v0.1.0`.

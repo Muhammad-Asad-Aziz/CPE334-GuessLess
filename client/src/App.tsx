@@ -7,6 +7,7 @@ import { AdminHomePage } from './pages/AdminHomePage';
 import { MySurveysPage } from './pages/owner/MySurveysPage';
 import { NewSurveyPage } from './pages/owner/NewSurveyPage';
 import { SurveyDetailPage } from './pages/owner/SurveyDetailPage';
+import { SummaryPage } from './pages/owner/SummaryPage';
 import { AvailableSurveysPage } from './pages/respondent/AvailableSurveysPage';
 import { TakeSurveyPage } from './pages/respondent/TakeSurveyPage';
 import { MyResponsesPage } from './pages/respondent/MyResponsesPage';
@@ -158,6 +159,14 @@ export function App() {
             element={
               <ProtectedRoute>
                 <SurveyDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/my-surveys/:surveyId/summary"
+            element={
+              <ProtectedRoute>
+                <SummaryPage />
               </ProtectedRoute>
             }
           />
