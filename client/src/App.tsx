@@ -4,6 +4,9 @@ import { Layout } from './components/Layout';
 import { EmptyState } from './components/EmptyState';
 import { LoginPage } from './pages/LoginPage';
 import { AdminHomePage } from './pages/AdminHomePage';
+import { MySurveysPage } from './pages/owner/MySurveysPage';
+import { NewSurveyPage } from './pages/owner/NewSurveyPage';
+import { SurveyDetailPage } from './pages/owner/SurveyDetailPage';
 import { UserInfo } from './components/Navbar';
 import { apiFetch, authStorage } from './lib/apiClient';
 
@@ -47,28 +50,6 @@ function MyResponsesPage() {
       <EmptyState
         title="No responses yet"
         description="Surveys you complete will appear here with confirmation dates."
-      />
-    </div>
-  );
-}
-
-function MySurveysPage() {
-  return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">My Surveys</h2>
-        <Link
-          to="/my-surveys/new"
-          className="px-4 py-2 bg-[#006B3C] hover:bg-[#0B7A46] text-white font-medium rounded-md text-sm transition-colors"
-        >
-          Create Survey
-        </Link>
-      </div>
-      <EmptyState
-        title="No surveys created yet"
-        description="Create your first survey draft to begin collecting feedback."
-        actionText="Create Survey"
-        onAction={() => alert('Survey builder will be implemented in F-02!')}
       />
     </div>
   );
@@ -165,6 +146,22 @@ export function App() {
             element={
               <ProtectedRoute>
                 <MySurveysPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/my-surveys/new"
+            element={
+              <ProtectedRoute>
+                <NewSurveyPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/my-surveys/:surveyId"
+            element={
+              <ProtectedRoute>
+                <SurveyDetailPage />
               </ProtectedRoute>
             }
           />

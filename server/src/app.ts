@@ -5,6 +5,7 @@ import { requestIdMiddleware } from './middleware/requestId';
 import { errorHandler } from './middleware/errorHandler';
 import { healthRouter } from './routes/health';
 import { authRouter } from './routes/auth';
+import { surveysRouter } from './routes/surveys';
 import { NotFoundError } from './errors';
 import { logger } from './lib/logger';
 
@@ -38,6 +39,9 @@ app.use('/api/health', healthRouter);
 // Auth routes (F-01)
 app.use('/api/v1/auth', authRouter);
 app.use('/api/auth', authRouter);
+
+// Owner survey routes (F-02)
+app.use('/api/v1/surveys', surveysRouter);
 
 // Catch-all 404 handler
 app.use((req, _res, next) => {
