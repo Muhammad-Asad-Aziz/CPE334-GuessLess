@@ -51,13 +51,34 @@ export async function seed() {
 
   const owner1Id = userMap['owner1@example.edu'];
 
+  // Helper to safely delete an existing survey and its cascade/restrict relations
+  const cleanSurvey = async (surveyId: string) => {
+    // Delete answer selections and answers for responses of this survey
+    const responses = await prisma.response.findMany({ where: { surveyId }, select: { id: true } });
+    const responseIds = responses.map((r) => r.id);
+    if (responseIds.length > 0) {
+      await prisma.answerSelection.deleteMany({
+        where: { answer: { responseId: { in: responseIds } } },
+      });
+      await prisma.answer.deleteMany({
+        where: { responseId: { in: responseIds } },
+      });
+      await prisma.response.deleteMany({
+        where: { id: { in: responseIds } },
+      });
+    }
+    await prisma.participation.deleteMany({ where: { surveyId } });
+    await prisma.surveyEligibility.deleteMany({ where: { surveyId } });
+    await prisma.survey.delete({ where: { id: surveyId } });
+  };
+
   // 2. Seed Survey S-PUB (PUBLISHED)
   const existingSPub = await prisma.survey.findFirst({
     where: { ownerId: owner1Id, title: 'Seed: CPE334 Course Evaluation' },
   });
 
   if (existingSPub) {
-    await prisma.survey.delete({ where: { id: existingSPub.id } });
+    await cleanSurvey(existingSPub.id);
   }
 
   const sPub = await prisma.survey.create({
@@ -102,7 +123,7 @@ export async function seed() {
   });
 
   if (existingSDraft) {
-    await prisma.survey.delete({ where: { id: existingSDraft.id } });
+    await cleanSurvey(existingSDraft.id);
   }
 
   const sDraft = await prisma.survey.create({
@@ -134,7 +155,7 @@ export async function seed() {
   });
 
   if (existingSClosed) {
-    await prisma.survey.delete({ where: { id: existingSClosed.id } });
+    await cleanSurvey(existingSClosed.id);
   }
 
   const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
