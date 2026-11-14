@@ -51,8 +51,9 @@ test.describe('F-03 Respondent Discovery, Submission & History E2E', () => {
     await expect(page.locator('body')).not.toContainText('Seed: Draft Feedback Form');
     await expect(page.locator('body')).not.toContainText('Seed: Closed Alumni Survey');
 
-    // Click "Answer Survey"
-    await page.click('a:has-text("Answer Survey")');
+    // Click "Answer Survey" on the Seed: CPE334 Course Evaluation card specifically
+    const sPubCard = page.locator('div.bg-white').filter({ hasText: 'Seed: CPE334 Course Evaluation' });
+    await sPubCard.locator('a:has-text("Answer Survey")').click();
     await expect(page).toHaveURL(/\/available\/[0-9a-f-]+/);
 
     // TEST-F03-01: Notice check and positioning ABOVE submit button
@@ -86,11 +87,12 @@ test.describe('F-03 Respondent Discovery, Submission & History E2E', () => {
     await page.goto('/available');
 
     // TEST-F03-03: Verify S-PUB now shows "Responded" badge and "View my submission"
-    await expect(page.locator('body')).toContainText('Responded');
-    await expect(page.locator('a:has-text("View my submission")')).toBeVisible();
+    const respondedCard = page.locator('div.bg-white').filter({ hasText: 'Seed: CPE334 Course Evaluation' });
+    await expect(respondedCard).toContainText('Responded');
+    await expect(respondedCard.locator('a:has-text("View my submission")')).toBeVisible();
 
     // TEST-F03-04: Click "View my submission"
-    await page.click('a:has-text("View my submission")');
+    await respondedCard.locator('a:has-text("View my submission")').click();
     await expect(page).toHaveURL(/\/my-responses\/[0-9a-f-]+/);
 
     // Verify submission details page shows answers: "About right" and rating 4

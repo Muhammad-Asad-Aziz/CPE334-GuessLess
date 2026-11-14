@@ -1,3 +1,5 @@
+import { Express } from 'express';
+
 export interface RouteSpec {
   id: number;
   method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
@@ -108,8 +110,104 @@ export const PROTECTED_ROUTES: RouteSpec[] = [
 ];
 
 export const PUBLIC_ROUTES = [
-  { method: 'POST', path: '/api/v1/auth/login' },
-  { method: 'GET', path: '/api/v1/health' },
-  { method: 'GET', path: '/api/health' },
+  { method: 'POST', path: '/api/v1/auth/login', description: 'Log in and obtain JWT' },
+  { method: 'GET', path: '/api/v1/health', description: 'System health check' },
+  { method: 'GET', path: '/api/health', description: 'Root health check alias' },
 ];
 
+export interface IntrospectedRoute {
+  method: string;
+  path: string;
+}
+
+function regexToPrefix(regex: RegExp): string {
+  const src = regex.source;
+  const cleaned = src
+    .replace(/^\^\\?/, '')
+    .replace(/\\\/\?\(\?=\\\/\|\$\)\/?.*$/, '')
+    .replace(/\\\//g, '/');
+  return cleaned.startsWith('/') ? cleaned : '/' + cleaned;
+}
+
+/**
+ * Traverses Express router stack to extract all registered routes.
+ */
+export function getIntrospectedRoutes(app: Express): IntrospectedRoute[] {
+  const routes: IntrospectedRoute[] = [];
+  const stack = (app as any)._router?.stack;
+  if (!stack) {
+    return routes;
+  }
+
+  for (const layer of stack) {
+    if (layer.route) {
+      const p = layer.route.path;
+      for (const m of Object.keys(layer.route.methods)) {
+        routes.push({ method: m.toUpperCase(), path: p });
+      }
+    } else if (layer.name === 'router' && layer.handle?.stack) {
+      const prefix = regexToPrefix(layer.regexp);
+      for (const sub of layer.handle.stack) {
+        if (sub.route) {
+          const subPath = sub.route.path === '/' ? '' : sub.route.path;
+          const fullPath = (prefix + subPath) || '/';
+          for (const m of Object.keys(sub.route.methods)) {
+            routes.push({ method: m.toUpperCase(), path: fullPath });
+          }
+        }
+      }
+    }
+  }
+
+  return routes;
+}
+
+/**
+ * Validates that all canonical /api/v1 routes in the Express app match the documented
+ * protected and public registries, and that no unregistered /api/v1 endpoints exist.
+ */
+export function assertRoutesComplete(app: Express) {
+  const introspected = getIntrospectedRoutes(app);
+
+  // 1. Every route in PROTECTED_ROUTES must exist in Express router
+  for (const spec of PROTECTED_ROUTES) {
+    const found = introspected.some(
+      (r) => r.method === spec.method && r.path === spec.path
+    );
+    if (!found) {
+      throw new Error(
+        `Registered router stack is missing protected route: ${spec.method} ${spec.path}`
+      );
+    }
+  }
+
+  // 2. Every route in PUBLIC_ROUTES must exist in Express router
+  for (const pub of PUBLIC_ROUTES) {
+    const found = introspected.some(
+      (r) => r.method === pub.method && r.path === pub.path
+    );
+    if (!found) {
+      throw new Error(
+        `Registered router stack is missing public route: ${pub.method} ${pub.path}`
+      );
+    }
+  }
+
+  // 3. Every canonical /api/v1 route in Express must be documented in either PROTECTED_ROUTES or PUBLIC_ROUTES
+  const knownV1 = new Set([
+    ...PROTECTED_ROUTES.map((r) => `${r.method} ${r.path}`),
+    ...PUBLIC_ROUTES.filter((r) => r.path.startsWith('/api/v1')).map(
+      (r) => `${r.method} ${r.path}`
+    ),
+  ]);
+
+  const v1Introspected = introspected.filter((r) => r.path.startsWith('/api/v1'));
+  for (const r of v1Introspected) {
+    const key = `${r.method} ${r.path}`;
+    if (!knownV1.has(key)) {
+      throw new Error(
+        `Express app has undeclared /api/v1 route not in PROTECTED_ROUTES or PUBLIC_ROUTES: ${key}`
+      );
+    }
+  }
+}
