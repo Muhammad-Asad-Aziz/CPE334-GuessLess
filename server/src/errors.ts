@@ -94,16 +94,8 @@ export class InternalError extends AppError {
  * Maps known Prisma errors (e.g. P2002 unique constraint) to domain AppErrors.
  */
 export function mapPrismaError(err: unknown): Error {
-  if (err && typeof err === 'object' && 'code' in err && (err as any).code === 'P2002') {
-    return new DuplicateResponseError('You have already submitted a response for this survey.');
-  }
-
-  if (err instanceof Error) {
-    return err;
-  }
-
-  return new InternalError('An unexpected database error occurred.');
+  // Stub for Phase A (Red TDD)
+  return new Error('Stub: not implemented yet');
 }
-
 
 

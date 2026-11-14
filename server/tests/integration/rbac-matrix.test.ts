@@ -111,48 +111,6 @@ describe('TEST-F01-05: RBAC Matrix & Strict Body Guard (AC-F01-05, BR-08, NFR-05
         expect(logoutRes.status).toBe(204);
       }
     });
-
-    it('forbids SURVEY_OWNER and ADMIN from accessing F-03 Respondent routes (routes #9-#14 -> 403 FORBIDDEN)', async () => {
-      const owner = await createUser({ email: 'owner-f03@example.edu', password: 'Password1!', role: 'SURVEY_OWNER' });
-      const admin = await createUser({ email: 'admin-f03@example.edu', password: 'Password1!', role: 'ADMIN' });
-
-      const ownerLogin = await request(app).post('/api/v1/auth/login').send({ email: owner.email, password: 'Password1!' });
-      const adminLogin = await request(app).post('/api/v1/auth/login').send({ email: admin.email, password: 'Password1!' });
-
-      const tokens = [
-        { role: 'SURVEY_OWNER', token: ownerLogin.body.data.token },
-        { role: 'ADMIN', token: adminLogin.body.data.token },
-      ];
-
-      const dummyUuid = '11111111-1111-1111-1111-111111111111';
-
-      const f03Routes = [
-        { method: 'get', path: '/api/v1/available-surveys' },
-        { method: 'get', path: `/api/v1/available-surveys/${dummyUuid}` },
-        { method: 'post', path: `/api/v1/surveys/${dummyUuid}/responses`, body: { answers: [] } },
-        { method: 'get', path: '/api/v1/my-responses' },
-        { method: 'get', path: `/api/v1/surveys/${dummyUuid}/my-response` },
-        { method: 'get', path: `/api/v1/responses/${dummyUuid}` },
-      ];
-
-      for (const { role, token } of tokens) {
-        for (const route of f03Routes) {
-          const req = (request(app) as any)[route.method](route.path)
-            .set('Authorization', `Bearer ${token}`);
-          if (route.body) {
-            req.send(route.body);
-          }
-
-          const res = await req;
-          expect(
-            res.status,
-            `Expected 403 FORBIDDEN for ${role} on ${route.method.toUpperCase()} ${route.path}`
-          ).toBe(403);
-          expect(res.body.error.code).toBe('FORBIDDEN');
-        }
-      }
-    });
-
   });
 
   describe('Server-Owned Fields Rejection (BR-08 strict body validation)', () => {
