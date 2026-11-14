@@ -68,6 +68,123 @@ describe('F-03 Responses Integration Tests (TDD)', () => {
     });
   });
 
+  describe('TEST-F03-02: Valid Response Persistence and Transactional Rollback (AC-F03-02)', () => {
+    it('persists response, participation, answers, and selections in one atomic transaction', async () => {
+      const resp2 = await createUser({
+        email: 'resp2@example.edu',
+        password: 'Password1!',
+        role: 'RESPONDENT',
+      });
+      const loginRes = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: resp2.email, password: 'Password1!' });
+      const resp2Token = loginRes.body.data.token;
+
+      const res = await request(app)
+        .post(`/api/v1/surveys/${sPub.id}/responses`)
+        .set('Authorization', `Bearer ${resp2Token}`)
+        .send({
+          answers: [
+            { questionId: q1.id, optionIds: [o2.id] },
+            { questionId: q2.id, rating: 5 },
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.responseId).toBeDefined();
+      expect(res.body.data.surveyId).toBe(sPub.id);
+      expect(res.body.data.submittedAt).toBeDefined();
+
+      // Database verification
+      const participation = await prisma.participation.findUnique({
+        where: {
+          surveyId_respondentId: {
+            surveyId: sPub.id,
+            respondentId: resp2.id,
+          },
+        },
+      });
+      expect(participation).toBeDefined();
+
+      const response = await prisma.response.findUnique({
+        where: {
+          surveyId_respondentId: {
+            surveyId: sPub.id,
+            respondentId: resp2.id,
+          },
+        },
+        include: {
+          answers: {
+            include: {
+              selections: true,
+            },
+          },
+        },
+      });
+      expect(response).toBeDefined();
+      expect(response?.mode).toBe('IDENTIFIED');
+      expect(response?.respondentId).toBe(resp2.id);
+      expect(response?.submittedAt).toBeDefined();
+      expect(response?.answers.length).toBe(2);
+
+      const singleChoiceAns = response?.answers.find((a) => a.questionId === q1.id);
+      expect(singleChoiceAns?.selections.length).toBe(1);
+      expect(singleChoiceAns?.selections[0].optionId).toBe(o2.id);
+
+      const ratingAns = response?.answers.find((a) => a.questionId === q2.id);
+      expect(ratingAns?.ratingValue).toBe(5);
+    });
+
+    it('rolls back everything when failure occurs during answer writing (0 rows created)', async () => {
+      const resp2 = await createUser({
+        email: 'resp2-fail@example.edu',
+        password: 'Password1!',
+        role: 'RESPONDENT',
+      });
+      const loginRes = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: resp2.email, password: 'Password1!' });
+      const resp2Token = loginRes.body.data.token;
+
+      // Inject answer writer failure into app.locals
+      app.locals.testAnswerWriter = async () => {
+        throw new Error('Injected failure during answer writing');
+      };
+
+      try {
+        const res = await request(app)
+          .post(`/api/v1/surveys/${sPub.id}/responses`)
+          .set('Authorization', `Bearer ${resp2Token}`)
+          .send({
+            answers: [
+              { questionId: q1.id, optionIds: [o2.id] },
+              { questionId: q2.id, rating: 5 },
+            ],
+          });
+
+        expect(res.status).toBe(500);
+        expect(res.body.error.code).toBe('INTERNAL_ERROR');
+
+        // Verify that Participation, Response, Answer, and AnswerSelection all rolled back to 0 rows
+        const participationCount = await prisma.participation.count({
+          where: { surveyId: sPub.id, respondentId: resp2.id },
+        });
+        const responseCount = await prisma.response.count({
+          where: { surveyId: sPub.id, respondentId: resp2.id },
+        });
+        const answerCount = await prisma.answer.count({
+          where: { questionId: { in: [q1.id, q2.id] } },
+        });
+
+        expect(participationCount).toBe(0);
+        expect(responseCount).toBe(0);
+        expect(answerCount).toBe(0);
+      } finally {
+        delete app.locals.testAnswerWriter;
+      }
+    });
+  });
+
   describe('TEST-F03-05: Duplicate Response Handling (BR-01, AC-F03-05)', () => {
     it('returns 409 DUPLICATE_RESPONSE on second submission and maintains exactly 1 response', async () => {
       const validPayload = {
