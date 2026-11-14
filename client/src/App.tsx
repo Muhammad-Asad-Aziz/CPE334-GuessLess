@@ -1,7 +1,11 @@
-import { useState } from 'react';
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { EmptyState } from './components/EmptyState';
+import { LoginPage } from './pages/LoginPage';
+import { AdminHomePage } from './pages/AdminHomePage';
+import { UserInfo } from './components/Navbar';
+import { apiFetch, authStorage } from './lib/apiClient';
 
 function HomePage() {
   return (
@@ -20,18 +24,6 @@ function HomePage() {
           Sign In
         </Link>
       </div>
-    </div>
-  );
-}
-
-function LoginPage() {
-  return (
-    <div className="max-w-md mx-auto my-12 p-6 bg-white rounded-lg shadow-sm border border-gray-200">
-      <h2 className="text-2xl font-bold text-gray-900 text-center mb-6">Sign In to GuessLess</h2>
-      <EmptyState
-        title="Authentication Ready"
-        description="F-01 Authentication feature branch will connect this form to POST /api/v1/auth/login."
-      />
     </div>
   );
 }
@@ -93,18 +85,89 @@ function NotFoundPage() {
   );
 }
 
+function ProtectedRoute({
+  children,
+}: {
+  children: JSX.Element;
+}) {
+  const token = authStorage.getToken();
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+}
+
+function RootRedirect({ user }: { user: UserInfo | null }) {
+  if (!user) {
+    return <HomePage />;
+  }
+  if (user.role === 'ADMIN') {
+    return <AdminHomePage />;
+  }
+  if (user.role === 'SURVEY_OWNER') {
+    return <Navigate to="/my-surveys" replace />;
+  }
+  if (user.role === 'RESPONDENT') {
+    return <Navigate to="/available" replace />;
+  }
+  return <HomePage />;
+}
+
 export function App() {
-  const [currentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<UserInfo | null>(null);
+
+  useEffect(() => {
+    const token = authStorage.getToken();
+    if (token) {
+      apiFetch<UserInfo>('/auth/me')
+        .then((res) => setCurrentUser(res.data))
+        .catch(() => {
+          authStorage.clearToken();
+          setCurrentUser(null);
+        });
+    } else {
+      setCurrentUser(null);
+    }
+  }, []);
 
   return (
     <BrowserRouter>
-      <Layout user={currentUser}>
+      <Layout user={currentUser} onLogout={() => setCurrentUser(null)}>
         <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/available" element={<AvailableSurveysPage />} />
-          <Route path="/my-responses" element={<MyResponsesPage />} />
-          <Route path="/my-surveys" element={<MySurveysPage />} />
+          <Route path="/" element={<RootRedirect user={currentUser} />} />
+          <Route
+            path="/login"
+            element={
+              <LoginPage
+                currentUser={currentUser}
+                onLoginSuccess={(u) => setCurrentUser(u as UserInfo)}
+              />
+            }
+          />
+          <Route
+            path="/available"
+            element={
+              <ProtectedRoute>
+                <AvailableSurveysPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/my-responses"
+            element={
+              <ProtectedRoute>
+                <MyResponsesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/my-surveys"
+            element={
+              <ProtectedRoute>
+                <MySurveysPage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Layout>

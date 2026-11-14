@@ -4,6 +4,7 @@ import pinoHttp from 'pino-http';
 import { requestIdMiddleware } from './middleware/requestId';
 import { errorHandler } from './middleware/errorHandler';
 import { healthRouter } from './routes/health';
+import { authRouter } from './routes/auth';
 import { NotFoundError } from './errors';
 import { logger } from './lib/logger';
 
@@ -33,6 +34,10 @@ app.use(express.json({ limit: '100kb' }));
 app.use('/api/v1/health', healthRouter);
 // Root alias path: /api/health
 app.use('/api/health', healthRouter);
+
+// Auth routes (F-01)
+app.use('/api/v1/auth', authRouter);
+app.use('/api/auth', authRouter);
 
 // Catch-all 404 handler
 app.use((req, _res, next) => {
