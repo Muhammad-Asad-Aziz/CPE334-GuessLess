@@ -25,13 +25,13 @@ export class ValidationError extends AppError {
 }
 
 export class UnauthenticatedError extends AppError {
-  constructor(message: string = 'Authentication required.') {
+  constructor(message: string = 'Authentication is required.') {
     super(401, 'UNAUTHENTICATED', message);
   }
 }
 
 export class InvalidCredentialsError extends AppError {
-  constructor(message: string = 'Invalid email or password.') {
+  constructor(message: string = 'Email or password is incorrect.') {
     super(401, 'INVALID_CREDENTIALS', message);
   }
 }

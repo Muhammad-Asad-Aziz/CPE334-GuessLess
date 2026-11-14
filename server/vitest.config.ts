@@ -13,6 +13,7 @@ export default defineConfig({
       TEST_DATABASE_URL: process.env.TEST_DATABASE_URL || 'postgresql://survey:change-me-db-password@localhost:5432/survey_test',
     },
     include: ['tests/**/*.test.ts'],
+    fileParallelism: false,
     testTimeout: 10000,
   },
 });
