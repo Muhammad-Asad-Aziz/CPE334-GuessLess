@@ -5,6 +5,7 @@ import { requestIdMiddleware } from './middleware/requestId';
 import { errorHandler } from './middleware/errorHandler';
 import { healthRouter } from './routes/health';
 import { authRouter } from './routes/auth';
+import { surveysRouter } from './routes/surveys';
 import { availableSurveysRouter } from './routes/availableSurveys';
 import { responsesRouter } from './routes/responses';
 import { myResponsesRouter } from './routes/myResponses';
@@ -41,6 +42,9 @@ app.use('/api/health', healthRouter);
 // Auth routes (F-01)
 app.use('/api/v1/auth', authRouter);
 app.use('/api/auth', authRouter);
+
+// Owner survey routes (F-02)
+app.use('/api/v1/surveys', surveysRouter);
 
 // Respondent Available Surveys routes (F-03, FR-08)
 app.use('/api/v1/available-surveys', availableSurveysRouter);

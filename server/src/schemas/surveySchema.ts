@@ -80,3 +80,37 @@ export const createSurveySchema = z
 export type OptionInput = z.infer<typeof optionInputSchema>;
 export type QuestionInput = z.infer<typeof questionInputSchema>;
 export type CreateSurveyInput = z.infer<typeof createSurveySchema>;
+
+export const uuidParamSchema = z.object({
+  id: z.string().uuid('must be a valid UUID'),
+});
+
+const coercePositiveInt = (defaultValue: number, fieldLabel: string) =>
+  z.preprocess((val) => {
+    if (val === undefined) return defaultValue;
+    if (typeof val !== 'string' || val.trim() === '') return NaN;
+    return Number(val);
+  }, z.number({ invalid_type_error: `${fieldLabel} must be an integer` }).int(`${fieldLabel} must be an integer`).min(1, `${fieldLabel} must be at least 1`));
+
+export const listSurveysQuerySchema = z.object({
+  page: coercePositiveInt(1, 'page'),
+  pageSize: z.preprocess(
+    (val) => {
+      if (val === undefined) return 20;
+      if (typeof val !== 'string' || val.trim() === '') return NaN;
+      return Number(val);
+    },
+    z
+      .number({ invalid_type_error: 'pageSize must be an integer' })
+      .int('pageSize must be an integer')
+      .min(1, 'pageSize must be at least 1')
+      .max(100, 'pageSize must be at most 100')
+  ),
+});
+
+export const emptyBodySchema = z.preprocess(
+  (val) => (val === undefined ? {} : val),
+  z.object({}).strict()
+);
+
+export type ListSurveysQuery = z.infer<typeof listSurveysQuerySchema>;
