@@ -61,5 +61,7 @@ At the start of every session, read this file and the relevant specification fil
 
 - **Current Sprint:** Sprint 1 (`sprint-1` staging branch)
 - **Active Baseline:** `v1.0` (`docs/srs.md`, `docs/features.md`, `docs/traceability.md`, `docs/system-sds.md`, `docs/sprints/plan.md`, `docs/sprints/sprint-1/*`)
-- **Last Completed:** Issue #1 (`v1.0` baseline and Sprint 1 contracts locked)
-- **Next Up:** Issue #2 (`feat/2-project-scaffold`), followed by parallel Wave 1 (Issue #3 `F-01` & Issue #4 Domain TDD + Owner UI)
+- **Last Completed:** Issue #2 (`feat/2-project-scaffold` — monorepo scaffold, 10-model Prisma schema & check constraint migrations `0001` and `0002` applied to dev/test DBs, fail-fast config validation, Express shell & `/api/v1/health`, Zen Green responsive client shell, Vitest/Supertest harness with 20/20 passing tests)
+- **Next Up:** Parallel Wave 1:
+  - Issue #3: `F-01` Authentication, Session Revocation & Role Guard (`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/me`, `authenticate` & `requireRole` middleware, `AC-F01-01`–`AC-F01-05`, `TEST-F01-01`–`TEST-F01-05`)
+  - Issue #4: `F-02` Survey Lifecycle Pure Domain Rules TDD (`domain/surveyLifecycle.ts`, `publishChecks`, `canTransition`, `BR-03`/`BR-04`, `TEST-F02-04`, `TEST-F02-07`) and Survey Owner UI baseline
