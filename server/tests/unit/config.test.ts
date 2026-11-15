@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { describe, it, expect } from 'vitest';
 import { loadConfig } from '../../src/config/env';
 
@@ -67,8 +69,22 @@ describe('Configuration & Fail-Fast Startup (TEST-NFR-02, TEST-NFR-09)', () => {
   });
 
   describe('Password Hashing Cost Validation (TEST-NFR-02)', () => {
+    it('defaults BCRYPT_COST to 12 when omitted', () => {
+      const env = { ...validBaseEnv };
+      delete (env as any).BCRYPT_COST;
+
+      const config = loadConfig(env);
+      expect(config.BCRYPT_COST).toBe(12);
+    });
+
     it('refuses startup in production when BCRYPT_COST is 9 (< 10)', () => {
       const env = { ...validBaseEnv, NODE_ENV: 'production', BCRYPT_COST: '9' };
+
+      expect(() => loadConfig(env)).toThrowError(/BCRYPT_COST/);
+    });
+
+    it('refuses startup in development when BCRYPT_COST is 9 (< 10)', () => {
+      const env = { ...validBaseEnv, NODE_ENV: 'development', BCRYPT_COST: '9' };
 
       expect(() => loadConfig(env)).toThrowError(/BCRYPT_COST/);
     });
@@ -91,6 +107,49 @@ describe('Configuration & Fail-Fast Startup (TEST-NFR-02, TEST-NFR-09)', () => {
       const env = { ...validBaseEnv, NODE_ENV: 'test', BCRYPT_COST: '3' };
 
       expect(() => loadConfig(env)).toThrowError(/BCRYPT_COST/);
+    });
+  });
+
+  describe('Repository Secret Hygiene (.gitignore & .env.example) (TEST-NFR-09)', () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+
+    it('ignores .env in .gitignore', () => {
+      const gitignore = fs.readFileSync(path.join(repoRoot, '.gitignore'), 'utf8');
+      const entries = gitignore
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0 && !line.startsWith('#'));
+
+      expect(entries).toContain('.env');
+    });
+
+    it('stores only change-me placeholders for secret variables in .env.example', () => {
+      const envExample = fs.readFileSync(path.join(repoRoot, '.env.example'), 'utf8');
+      const vars = new Map<string, string>();
+      for (const rawLine of envExample.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+        const eqIdx = line.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = line.slice(0, eqIdx).trim();
+        const val = line.slice(eqIdx + 1).trim();
+        vars.set(key, val);
+      }
+
+      const secretKeys = [
+        'DB_PASSWORD',
+        'DATABASE_URL',
+        'TEST_DATABASE_URL',
+        'JWT_SECRET',
+        'SEED_PASSWORD',
+      ];
+      for (const key of secretKeys) {
+        const val = vars.get(key);
+        expect(val, `${key} should be defined in .env.example`).toBeDefined();
+        expect(val!.toLowerCase(), `${key} in .env.example must be a change-me placeholder`).toContain(
+          'change-me'
+        );
+      }
     });
   });
 });

@@ -14,9 +14,11 @@
     "test:unit": "npm run test:unit -w server",
     "test:integration": "npm run test:integration -w server",
     "test:e2e": "playwright test",
+    "test:perf": "npm run test:perf -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
     "lint": "echo \"No linting errors\"",
-    "seed": "npm run seed -w server"
+    "seed": "npm run seed -w server",
+    "seed:benchmark": "npm run seed:benchmark -w server"
   },
   "prisma": {
     "seed": "tsx server/prisma/seed.ts"
