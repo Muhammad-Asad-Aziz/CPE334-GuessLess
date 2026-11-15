@@ -4,7 +4,7 @@ CPE 334 Introduction to Software Engineering in the Age of AI Agents (Theme 10)
 
 ## Quick Start (NFR-10 Reproducible Setup)
 
-Follow these exact steps from a clean repository checkout:
+Follow these exact steps from a clean repository checkout (at most 6 commands):
 
 ```bash
 # 1. Copy environment configuration
@@ -16,10 +16,13 @@ docker compose up -d db
 # 3. Install dependencies, create test database, generate Prisma client, and apply migrations
 npm run setup
 
-# 4. Start API and client in development mode
+# 4. Seed development database with initial accounts and demo surveys
+npm run seed
+
+# 5. Start API and client in development mode
 npm run dev
 
-# 5. Run test suite
+# 6. Run test suite
 npm test
 ```
 
@@ -32,6 +35,7 @@ npm test
 ## Available Scripts
 
 - `npm run setup`: Full installation, database initialization, and migration.
+- `npm run seed`: Seeds initial demo accounts (`owner1`, `owner2`, `resp1`, `resp2`, `resp3`, `admin1`) and fixture surveys.
 - `npm run dev`: Runs server (`http://localhost:8080`) and client (`http://localhost:5173`) concurrently.
 - `npm test`: Runs server unit and integration test suites.
 - `npm run typecheck`: Runs TypeScript type checking across both workspaces.
