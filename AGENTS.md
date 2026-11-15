@@ -59,9 +59,9 @@ At the start of every session, read this file and the relevant specification fil
 
 ## 5. Current Context Handoff
 
-- **Current Sprint:** Sprint 1 closeout (`sprint1-staging` verified on `baac264`; closeout docs updated directly on `sprint1-staging`, referred to as `sprint-1` in docs) → **Next:** Sprint 2 (`sprint-2`: `F-07`, `F-05`, `F-06`)
-- **Active Baseline:** `v1.0` (`docs/srs.md`, `docs/features.md` v1.1, `docs/traceability.md` v1.1, `docs/system-sds.md`, `docs/sprints/plan.md`, `docs/sprints/sprint-1/*`)
-- **Last Completed:** **Issue #10** (`sprint1-staging`, verifying `baac264`) — Executed full Sprint 1 verification suite on `baac264`, updated `docs/traceability.md` v1.1 (Sections 2–5, 7) and `docs/features.md` v1.1 (`F-01`–`F-04` marked `Verified`), and prepared Release PR `sprint1-staging` → `main` (`v0.1.0`) pending non-author `TEST-NFR-10` walkthrough.
+- **Current Sprint:** Sprint 1 closeout (`sprint1-staging` verified on `baac264`, `TEST-NFR-10` verified on `a9e573f`; referred to as `sprint-1` in docs) → **Next:** Sprint 2 (`sprint-2`: `F-07`, `F-05`, `F-06`)
+- **Active Baseline:** `v1.0` (`docs/srs.md`, `docs/features.md` v1.1, `docs/traceability.md` v1.2, `docs/system-sds.md`, `docs/sprints/plan.md`, `docs/sprints/sprint-1/*`)
+- **Last Completed:** **Issue #10** (`sprint1-staging`, code/tests verified on `baac264`; `TEST-NFR-10` verified on `a9e573f`) — Executed full Sprint 1 verification suite on `baac264`, completed non-author `TEST-NFR-10` clean-checkout walkthrough on `a9e573f`, updated `docs/traceability.md` v1.2 (Sections 2–5, 7) and `docs/features.md` v1.1 (`F-01`–`F-04` marked `Verified`), ready for Release PR `sprint1-staging` → `main` (`v0.1.0`).
 
 ### Completed Work (Issues #1–#10)
 
@@ -79,7 +79,7 @@ At the start of every session, read this file and the relevant specification fil
   - **`npm test` (Vitest):** **`24 passed (24)` files / `305 passed (305)` tests** (`40.61s`; includes `health.test.ts` re-export count).
   - **`TEST-NFR-01` (`npm run seed:benchmark && npm run test:perf`, `1` survey, `10` Qs, `1,000 + 50` resp):** `GET /available-surveys` **p95 `7.14 ms`** (`p50 5.40`, `max 7.58`); `POST /surveys/{id}/responses` **p95 `23.67 ms`** (`p50 21.50`, `max 24.34`); `GET /surveys/{id}/my-response` **p95 `9.41 ms`** (`p50 7.95`, `max 9.63`); `GET /surveys/{id}/summary` **p95 `8.59 ms`** (`p50 7.94`, `max 8.85`) — all `< 300 ms` **PASS**.
   - **`TEST-NFR-04` (`npm run seed && npx playwright test --reporter=list`):** **`39 passed (22.8s)`** across `mobile-360`, `tablet-768`, `desktop-1280` (`24` screenshots saved under gitignored `artifacts/screenshots/`).
-  - **Docs updated (`v1.1`):** `docs/traceability.md` (Sections 2–5, 7) and `docs/features.md` (`F-01`–`F-04` set to `Verified`; `TEST-NFR-10` kept honestly as `Not run` pending Xander's walkthrough).
+  - **Docs updated:** `docs/traceability.md` v1.2 (Sections 2–5, 7) and `docs/features.md` v1.1 (`F-01`–`F-04` set to `Verified`). **`TEST-NFR-10`** (`a9e573f`, clean checkout by non-author Xander): all `6` `README.md` commands passed and all `3` seeded roles (`owner1@example.edu`, `resp1@example.edu`, `admin1@example.edu`) logged in.
 
 ### Codebase Conventions Established (Important for Upcoming Issues)
 
@@ -89,7 +89,6 @@ At the start of every session, read this file and the relevant specification fil
 
 ### Immediate Next Steps (Release `v0.1.0` → Sprint 2)
 
-1. Review, commit, and push Issue #10 closeout docs on `sprint1-staging`.
-2. Execute `TEST-NFR-10` clean-checkout walkthrough of `README.md` by non-author (`Al Xander James Codino Ybanez`) and capture Deliverable 1 Part F evidence (`DoD R-6`, `R-8`).
-3. Open & partner-review Release PR `sprint1-staging` → `main` (merge commit, not squash), tag `v0.1.0` on `main`, and promote `F-01`–`F-04` in `docs/features.md` to `Accepted`.
-4. Start **Sprint 2** on `sprint-2`: prioritize `F-07` (Anonymous Survey Mode) paired first, alongside `F-05` (Draft Editing/Deletion, Scheduled Close & Eligibility) and `F-06` (Multiple-Choice & Free-Text Questions) per `docs/sprints/plan.md`.
+1. Review, commit, and push the `TEST-NFR-10` traceability update on `sprint1-staging`, and capture Deliverable 1 Part F evidence (`DoD R-6`, `R-8`).
+2. Open & partner-review Release PR `sprint1-staging` → `main` (merge commit, not squash), tag `v0.1.0` on `main`, and promote `F-01`–`F-04` in `docs/features.md` to `Accepted`.
+3. Start **Sprint 2** on `sprint-2`: prioritize `F-07` (Anonymous Survey Mode) paired first, alongside `F-05` (Draft Editing/Deletion, Scheduled Close & Eligibility) and `F-06` (Multiple-Choice & Free-Text Questions) per `docs/sprints/plan.md`.
