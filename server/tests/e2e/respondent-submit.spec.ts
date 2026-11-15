@@ -138,19 +138,36 @@ test.describe('F-03 Respondent Discovery, Submission & History E2E', () => {
     }
   });
 
-  test('TEST-F03-09: Respondent with no answers sees empty state', async ({ page }) => {
-    // Log in as resp3 (who has answered nothing)
-    await page.goto('/login');
-    await page.fill('#email', 'resp3@example.edu');
-    await page.fill('#password', SEED_PASSWORD);
-    await page.click('button[type="submit"]');
+  test('TEST-F03-09: Respondent with no answers sees empty state', async ({ page }, testInfo) => {
+    // Use an isolated synthetic respondent with 0 responses so existing dev-DB activity
+    // on resp3 does not break this assertion.
+    const suffix = `${testInfo.project.name}-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`;
+    const passwordHash = await bcrypt.hash(SEED_PASSWORD, 4);
+    const emptyResp = await prisma.user.create({
+      data: {
+        email: `e2e-f03-empty-${suffix}@example.edu`,
+        displayName: 'Respondent Three',
+        passwordHash,
+        role: 'RESPONDENT',
+        isActive: true,
+      },
+    });
 
-    await expect(page).toHaveURL(/\/available/);
+    try {
+      await page.goto('/login');
+      await page.fill('#email', emptyResp.email);
+      await page.fill('#password', SEED_PASSWORD);
+      await page.click('button[type="submit"]');
 
-    // Visit /my-responses
-    await page.goto('/my-responses');
+      await expect(page).toHaveURL(/\/available/);
 
-    // Verify empty state text
-    await expect(page.locator('body')).toContainText('You have not answered any surveys yet.');
+      // Visit /my-responses
+      await page.goto('/my-responses');
+
+      // Verify empty state text
+      await expect(page.locator('body')).toContainText('You have not answered any surveys yet.');
+    } finally {
+      await cleanupRespondent(emptyResp.id);
+    }
   });
 });

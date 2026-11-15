@@ -227,9 +227,9 @@ test.describe('TEST-NFR-04 Responsive UI & Screenshots (360 / 768 / 1280 px)', (
     expect(sDraft, 'Seeded S-DRAFT survey missing; run npm run seed first.').toBeTruthy();
     expect(sClosed, 'Seeded S-CLOSED survey missing; run npm run seed first.').toBeTruthy();
 
-    // Create an isolated synthetic respondent with 1 recorded response on S-CLOSED so
-    // /my-responses is verified in its populated state across parallel viewport projects
-    // without mutating resp1 or S-PUB.
+    // Create an isolated synthetic respondent starting with 0 responses (for /available,
+    // /available/{S-PUB}, and empty /my-responses), then record 1 response on S-CLOSED
+    // for populated /my-responses — zero dependency on resp1/resp2/resp3 dev-DB state.
     const suffix = `${testInfo.project.name}-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`;
     const tempRespEmail = `e2e-nfr04-resp-${suffix}@example.edu`;
     const passwordHash = await bcrypt.hash(SEED_PASSWORD, 4);
@@ -244,6 +244,30 @@ test.describe('TEST-NFR-04 Responsive UI & Screenshots (360 / 768 / 1280 px)', (
     });
 
     try {
+      // 1. /login (Public)
+      await page.goto('/login');
+      await expect(page.locator('h1')).toContainText('Sign in to GuessLess');
+      await assertResponsiveLayoutAndCapture(page, width, '01-login');
+
+      // 2. /available (Clean synthetic respondent before any submission)
+      await loginViaUi(page, tempRespEmail, /\/available$/);
+      await expect(page.locator('h1')).toContainText('Available Surveys');
+      await expect(page.locator('body')).toContainText(sPub!.title);
+      await assertResponsiveLayoutAndCapture(page, width, '02-available');
+
+      // 3. /available/{S-PUB} (Rendered survey form before respondent submits)
+      await page.goto(`/available/${sPub!.id}`);
+      await expect(page.locator('h1')).toContainText(sPub!.title);
+      await expect(page.locator('button[type="submit"]:has-text("Submit")')).toBeVisible();
+      await assertResponsiveLayoutAndCapture(page, width, '03-available-survey-form');
+
+      // 4a. /my-responses (Empty state for synthetic respondent)
+      await page.goto('/my-responses');
+      await expect(page.locator('h1')).toContainText('My Submissions');
+      await expect(page.locator('body')).toContainText('You have not answered any surveys yet.');
+      await assertResponsiveLayoutAndCapture(page, width, '04a-my-responses-empty');
+
+      // 4b. /my-responses (Populated state after recording 1 response on S-CLOSED)
       const submittedAt = new Date();
       const dayDate = new Date(`${calendarDay(submittedAt)}T00:00:00.000Z`);
       const closedQ1 = sClosed!.questions[0];
@@ -277,33 +301,7 @@ test.describe('TEST-NFR-04 Responsive UI & Screenshots (360 / 768 / 1280 px)', (
         });
       });
 
-      // 1. /login (Public)
-      await page.goto('/login');
-      await expect(page.locator('h1')).toContainText('Sign in to GuessLess');
-      await assertResponsiveLayoutAndCapture(page, width, '01-login');
-
-      // 2. /available (Seeded Respondent: resp2 — isolated from respondent-submit.spec.ts resp1)
-      await loginViaUi(page, 'resp2@example.edu', /\/available$/);
-      await expect(page.locator('h1')).toContainText('Available Surveys');
-      await expect(page.locator('body')).toContainText(sPub!.title);
-      await assertResponsiveLayoutAndCapture(page, width, '02-available');
-
-      // 3. /available/{S-PUB} (Rendered survey form before resp2 submits)
-      await page.goto(`/available/${sPub!.id}`);
-      await expect(page.locator('h1')).toContainText(sPub!.title);
-      await expect(page.locator('button[type="submit"]:has-text("Submit")')).toBeVisible();
-      await assertResponsiveLayoutAndCapture(page, width, '03-available-survey-form');
-
-      // 4a. /my-responses (Empty state for clean resp2)
-      await page.goto('/my-responses');
-      await expect(page.locator('h1')).toContainText('My Submissions');
-      await expect(page.locator('body')).toContainText('You have not answered any surveys yet.');
-      await assertResponsiveLayoutAndCapture(page, width, '04a-my-responses-empty');
-
-      // 4b. /my-responses (Populated state with isolated synthetic respondent)
-      await logoutViaStorage(page);
-      await loginViaUi(page, tempRespEmail, /\/available$/);
-      await page.goto('/my-responses');
+      await page.reload();
       await expect(page.locator('h1')).toContainText('My Submissions');
       await expect(page.locator('body')).toContainText(sClosed!.title);
       await assertResponsiveLayoutAndCapture(page, width, '04-my-responses');
