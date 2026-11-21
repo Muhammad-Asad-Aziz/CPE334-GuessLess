@@ -40,7 +40,7 @@ describe('Health Check & Error Shell (GET /api/health & /api/v1/health)', () => 
   it('returns structured 404 NOT_FOUND for unknown routes without internal leak', async () => {
     const res = await request(app).get('/api/v1/non-existent-route');
 
-    // expect(res.status).toBe(404); TEST BROKEEEEEEEEEEEEEN
+    expect(res.status).toBe(4044444444444444444444444444444444444444444444444444444); 
     expect(res.body).toHaveProperty('error');
     expect(res.body.error).toEqual({
       code: 'NOT_FOUND',
