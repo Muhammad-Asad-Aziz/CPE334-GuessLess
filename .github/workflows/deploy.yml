@@ -61,7 +61,6 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.WIF_PROVIDER }}
           service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
-
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
 
       - name: Build and push image
@@ -69,7 +68,7 @@ jobs:
         run: |
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
           IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/s40fcb4ce/s40fcb4ce:$IMAGE_TAG"
-          docker build --build-arg "APP_VERSION=$IMAGE_TAG" --tag "$IMAGE" .
+          docker build --build-arg APP_VERSION="$IMAGE_TAG" --tag "$IMAGE" .
           docker push "$IMAGE"
 
       - name: Verify image, migrate and deploy
@@ -94,6 +93,6 @@ jobs:
             echo "- Digest: \`$DEPLOYED_IMAGE\`"
             echo "- Rollback: $ROLLBACK"
             echo "- URL: $SERVICE_URL"
-            echo '- Smoke test: passed (/api/v1/health, /api/health, /api/ready, /).'
+            echo '- Smoke test: passed (health, readiness/DB, SPA HTML).'
             echo '- See smoke step for optional login check status.'
           } >> "$GITHUB_STEP_SUMMARY"

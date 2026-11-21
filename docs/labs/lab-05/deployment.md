@@ -89,7 +89,7 @@ Provisioned via the CPE334 Student Cloud Portal:
 | Artifact Registry Repository | `asia-southeast1-docker.pkg.dev/cpe-se-course-2026/s40fcb4ce` |
 | Runtime Service Account | `s40fcb4ce-runner@cpe-se-course-2026.iam.gserviceaccount.com` |
 | Secret Manager Secrets | `s40fcb4ce-database-url`, `s40fcb4ce-demo-password`, `s40fcb4ce-app-secret-1` (`JWT_SECRET`) |
-| Public Cloud Run URL | `[Fill in after Episode 5 first deployment]` |
+| Public Cloud Run URL | `https://s40fcb4ce-4d7hbszvwq-as.a.run.app/` |
 
 > **Shared-project safety:** Never modify, redeploy, or delete resources outside prefix `s40fcb4ce`, and never run `teardown.sh`. Contact a TA for pause or cleanup.
 
