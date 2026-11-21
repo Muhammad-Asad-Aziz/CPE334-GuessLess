@@ -16,40 +16,66 @@ describe('TEST-NFR-07: Process-Restart Data Durability (NFR-07, SRS 5, SDS 11)',
 
   function killProcess(child: ChildProcess | null): Promise<void> {
     return new Promise((resolve) => {
-      if (!child || !child.pid || child.killed) {
+      if (!child || !child.pid) {
         return resolve();
       }
+      const pid = child.pid;
+
       if (process.platform === 'win32') {
-        exec(`taskkill /pid ${child.pid} /T /F`, () => {
+        exec(`taskkill /pid ${pid} /T /F`, () => {
           resolve();
         });
-      } else {
-        child.kill('SIGTERM');
-        resolve();
+        return;
       }
+
+      // On POSIX (Linux/macOS), signal the entire detached process group (-pid)
+      // and wait until every process in the group (sh, npx, tsx, node) has exited.
+      try {
+        process.kill(-pid, 'SIGTERM');
+      } catch {
+        return resolve();
+      }
+
+      const deadline = Date.now() + 3000;
+      const poll = setInterval(() => {
+        try {
+          process.kill(-pid, 0); // still alive if no error
+          if (Date.now() >= deadline) {
+            try {
+              process.kill(-pid, 'SIGKILL');
+            } catch {
+              // already exited
+            }
+            clearInterval(poll);
+            setTimeout(resolve, 100);
+          }
+        } catch {
+          // ESRCH: entire process group has exited
+          clearInterval(poll);
+          resolve();
+        }
+      }, 100);
     });
   }
 
   function startServerProcess(): Promise<ChildProcess> {
     return new Promise((resolve, reject) => {
       const cmd = process.platform === 'win32' ? 'npx.cmd tsx src/index.ts' : 'npx tsx src/index.ts';
-      const child = spawn(
-        cmd,
-        {
-          cwd: serverDir,
-          env: {
-            ...process.env,
-            NODE_ENV: 'test',
-            DATABASE_URL: testDbUrl,
-            TEST_DATABASE_URL: testDbUrl,
-            PORT: String(port),
-            BCRYPT_COST: '4',
-            LOG_LEVEL: 'silent',
-          },
-          stdio: 'pipe',
-          shell: true,
-        }
-      );
+      const child = spawn(cmd, {
+        cwd: serverDir,
+        env: {
+          ...process.env,
+          NODE_ENV: 'test',
+          DATABASE_URL: testDbUrl,
+          TEST_DATABASE_URL: testDbUrl,
+          PORT: String(port),
+          BCRYPT_COST: '4',
+          LOG_LEVEL: 'silent',
+        },
+        stdio: 'pipe',
+        shell: true,
+        detached: process.platform !== 'win32',
+      });
 
       child.on('error', (err) => reject(err));
 
@@ -76,7 +102,7 @@ describe('TEST-NFR-07: Process-Restart Data Durability (NFR-07, SRS 5, SDS 11)',
           reject(new Error(`Timed out waiting for child server to become healthy at ${baseUrl}`));
         }
       }, checkInterval);
-    });
+      });
   }
 
   beforeAll(async () => {

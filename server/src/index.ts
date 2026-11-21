@@ -25,6 +25,7 @@ async function startServer() {
         logger.info('Database disconnected. Server stopped.');
         process.exit(0);
       });
+      server.closeIdleConnections?.();
 
       // Force shutdown after 10s timeout
       setTimeout(() => {
