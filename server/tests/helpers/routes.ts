@@ -113,6 +113,7 @@ export const PUBLIC_ROUTES = [
   { method: 'POST', path: '/api/v1/auth/login', description: 'Log in and obtain JWT' },
   { method: 'GET', path: '/api/v1/health', description: 'System health check' },
   { method: 'GET', path: '/api/health', description: 'Root health check alias' },
+  { method: 'GET', path: '/api/ready' },
 ];
 
 export interface IntrospectedRoute {

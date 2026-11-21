@@ -1,0 +1,33 @@
+# Git & CI
+.git
+.gitignore
+.github
+
+# Local secrets — NEVER allow into a Docker build context
+.env
+.env.*
+
+# Dependencies & local builds
+node_modules
+server/node_modules
+client/node_modules
+server/dist
+client/dist
+
+# Tests, artifacts, docs, deploy scripts
+server/tests
+playwright-report
+test-results
+artifacts
+coverage
+docs
+deploy
+*.md
+*.pdf
+
+# Editor / OS clutter
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.log
