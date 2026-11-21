@@ -2,20 +2,45 @@
 set -euo pipefail
 
 # ==============================================================================
-# GuessLess — Idempotent Google Cloud Run Deployment Script (Team s40fcb4ce)
+# TokTickIT — Idempotent Google Cloud Run Deployment Script
 # ==============================================================================
 # Usage:
 #   ./deploy/deploy.sh [--demo]
 #
 # Environment Variables (Optional):
-#   PROJECT_ID   GCP Project ID (defaults to cpe-se-course-2026)
+#   PROJECT_ID   GCP Project ID (defaults to active gcloud config project)
 #   REGION       GCP Region (default: asia-southeast1)
 #   DRY_RUN      Set DRY_RUN=1 to print all gcloud commands without executing
 #
-# ⭐ CHANGE ME — reviewed for GuessLess:
-#   - Resource names use team prefix `s40fcb4ce`
-#   - Migrate/seed command runs `npx --no-install prisma migrate deploy && npm run seed`
-#   - Port is `8080`; secrets mount `DATABASE_URL`, `JWT_SECRET`, and `SEED_PASSWORD`
+# WHAT THIS SCRIPT DOES  (one-time / manual first setup; safe to re-run)
+#   Creates every cloud resource the app needs and does the first deployment:
+#   1 enable APIs     2 Artifact Registry  3 Cloud SQL instance  4 database
+#   5 runtime SA+IAM  6 DB user + secret   7 admin password      8 demo password
+#   (secret access)   9 build image        10 migrate+seed job   11 Cloud Run service
+#   After this, routine releases are done by GitHub Actions (deploy.yml ->
+#   deploy/release.sh), which only UPDATES these resources.
+#
+# ⭐ IMPORTANT
+#   - Idempotent: existing resources/secrets are reused, never overwritten
+#     (a re-run does not replace credentials).
+#   - Passwords are generated with openssl and live only in Secret Manager;
+#     they are never printed (run_cmd redacts --password=...).
+#   - Preview first with:  DRY_RUN=1 ./deploy/deploy.sh   (no gcloud calls)
+#   - Run from the REPO ROOT (step 9 builds the root Dockerfile).
+#   - Offline test: deploy/tests/test_deploy_stub.sh
+#
+# REFERENCES
+#   - gcloud run deploy : https://cloud.google.com/sdk/gcloud/reference/run/deploy
+#   - Cloud Run jobs    : https://cloud.google.com/run/docs/create-jobs
+#   - Cloud SQL + Run   : https://cloud.google.com/sql/docs/postgres/connect-run
+#   - Secret Manager    : https://cloud.google.com/secret-manager/docs
+#   - Artifact Registry : https://cloud.google.com/artifact-registry/docs/docker
+#
+# ⭐ CHANGE ME — groups using another tech stack must review (marked below):
+#   # CHANGE ME: resource names (REPO_NAME, SQL_INSTANCE, SERVICE_NAME, ...)
+#   # CHANGE ME: database engine/version (steps 3, 4, 6)
+#   # CHANGE ME: migrate/seed command of the Cloud Run job (step 10)
+#   # CHANGE ME: port / memory / scaling flags (step 11)
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -90,13 +115,12 @@ IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:$
 SECRET_DB_URL="s40fcb4ce-database-url"
 SECRET_ADMIN_PASS="s40fcb4ce-admin-password"
 SECRET_DEMO_PASS="s40fcb4ce-demo-password"
-SECRET_JWT="s40fcb4ce-app-secret-1"
 
 GENERATED_ADMIN_PASSWORD=""
 GENERATED_DEMO_PASSWORD=""
 
 echo "=================================================================="
-echo "GuessLess Cloud Run Deployment"
+echo "TokTickIT Cloud Run Deployment"
 echo "Project : ${PROJECT_ID}"
 echo "Region  : ${REGION}"
 echo "Demo    : ${SEED_DEMO_DATA}"
@@ -106,7 +130,7 @@ echo "=================================================================="
 # ==============================================================================
 # Portal/TA pre-provisions infrastructure and public service IAM (Guide 5.3 steps 1–8, 5.4).
 # These names must exist. Never create or modify project-level IAM here.
-JOB_SECRETS="DATABASE_URL=${SECRET_DB_URL}:latest,JWT_SECRET=${SECRET_JWT}:latest,SEED_PASSWORD=${SECRET_DEMO_PASS}:latest"
+JOB_SECRETS="DATABASE_URL=${SECRET_DB_URL}:latest,ADMIN_PASSWORD=${SECRET_ADMIN_PASS}:latest"
 if [ "$SEED_DEMO_DATA" = "true" ]; then
   JOB_SECRETS="${JOB_SECRETS},DEMO_USER_PASSWORD=${SECRET_DEMO_PASS}:latest"
 fi
@@ -114,11 +138,12 @@ if [ "$DRY_RUN" != "1" ]; then
   gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" >/dev/null
   gcloud run jobs describe "$MIGRATE_JOB_NAME" --project "$PROJECT_ID" --region "$REGION" >/dev/null
 fi
-# 9. Build & Push Unified Container Image
+# 9. Build & Push Unified Container Image via Cloud Build
 #    Builds the root Dockerfile (run this script from the repo root).
+#    Tag `latest` is only for this first manual setup; deploy.yml uses commit SHAs.
 # ==============================================================================
 run_cmd gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-run_cmd docker build --platform linux/amd64 --build-arg "APP_VERSION=${IMAGE_TAG}" --tag "$IMAGE_URI" .
+run_cmd docker build --platform linux/amd64 --tag "$IMAGE_URI" .
 run_cmd docker push "$IMAGE_URI"
 if [ "$DRY_RUN" != "1" ]; then
   IMAGE_URI="$(gcloud artifacts docker images describe "$IMAGE_URI" --project "$PROJECT_ID" --format='value(image_summary.fully_qualified_digest)')"
@@ -129,7 +154,8 @@ fi
 # 10. Create/Update & Execute Cloud Run Job for Migration + Non-destructive Seed
 #     ⭐ IMPORTANT: if this job fails the script stops BEFORE deploying the
 #        service, so a broken migration never reaches users.
-#     CHANGE ME: runs GuessLess Prisma migrations + idempotent seed.
+#     CHANGE ME: `--args` (prisma migrate deploy && npm run prisma:seed) is
+#        Prisma/npm specific — use your stack's migrate/seed command.
 #     deploy.yml / release.sh later re-run this same job (name: s40fcb4ce-migrate).
 # ==============================================================================
 run_cmd gcloud run jobs update "$MIGRATE_JOB_NAME" \
@@ -138,9 +164,9 @@ run_cmd gcloud run jobs update "$MIGRATE_JOB_NAME" \
   --service-account "$SA_EMAIL" \
   --set-cloudsql-instances "$SQL_CONN_NAME" \
   --set-secrets "$JOB_SECRETS" \
-  --set-env-vars "NODE_ENV=production,TZ=Asia/Bangkok,SEED_DEMO_DATA=${SEED_DEMO_DATA},JWT_EXPIRES_MINUTES=60,BCRYPT_COST=12,ANON_MIN_RESPONSES=5,LOG_LEVEL=info" \
+  --set-env-vars "NODE_ENV=production,TZ=Asia/Bangkok,SEED_DEMO_DATA=${SEED_DEMO_DATA}" \
   --command "sh" \
-  --args "-c,npx --no-install prisma migrate deploy && npm run seed" \
+  --args "-c,npx prisma migrate deploy && npm run prisma:seed" \
   --max-retries 1 \
   --task-timeout 300s \
   --project "$PROJECT_ID"
@@ -157,20 +183,22 @@ fi
 
 # ==============================================================================
 # 11. Deploy Cloud Run Service
-#     CHANGE ME: --port matches GuessLess Dockerfile (8080); mounts DATABASE_URL & JWT_SECRET.
+#     CHANGE ME: --port must equal the port in the Dockerfile (3000); tune
+#                --memory / --cpu / --max-instances for your app.
+#     ⚠️ --allow-unauthenticated makes the service public (needed for the demo).
 # ==============================================================================
 run_cmd gcloud run services update "$SERVICE_NAME" \
   --image "$IMAGE_URI" \
   --region "$REGION" \
   --service-account "$SA_EMAIL" \
   --add-cloudsql-instances "$SQL_CONN_NAME" \
-  --set-secrets "DATABASE_URL=${SECRET_DB_URL}:latest,JWT_SECRET=${SECRET_JWT}:latest" \
-  --set-env-vars "NODE_ENV=production,TZ=Asia/Bangkok,JWT_EXPIRES_MINUTES=60,BCRYPT_COST=12,ANON_MIN_RESPONSES=5,LOG_LEVEL=info" \
+  --set-secrets "DATABASE_URL=${SECRET_DB_URL}:latest" \
+  --set-env-vars "NODE_ENV=production,TZ=Asia/Bangkok" \
   --min-instances 0 \
   --max-instances 1 \
   --memory 512Mi \
   --cpu 1 \
-  --port 8080 \
+  --port 3000 \
   --project "$PROJECT_ID"
 
 run_cmd gcloud run services update-traffic "$SERVICE_NAME" --to-latest --project "$PROJECT_ID" --region "$REGION" --quiet
@@ -187,9 +215,11 @@ printf '\n'
 printf '%s\n' "=================================================================="
 printf '%s\n' "Deployment Completed!"
 printf '%s\n' "Service URL    : ${SERVICE_URL}"
-printf '%s\n' "Health Check   : ${SERVICE_URL}/api/v1/health"
+printf '%s\n' "Health Check   : ${SERVICE_URL}/api/health"
 printf '%s\n' "Readiness Check: ${SERVICE_URL}/api/ready"
-printf '%s\n' "Seed Accounts  : owner1@example.edu, resp1@example.edu, admin1@example.edu"
-printf '%s\n' "Seed Password  : Stored in Secret Manager: ${SECRET_DEMO_PASS} (not printed)."
-printf '%s\n' "JWT Secret     : Stored in Secret Manager: ${SECRET_JWT} (not printed)."
+printf '%s\n' "Admin Email    : john.smith@example.com (mustChangePassword: true)"
+printf '%s\n' "Admin Password : Stored in Secret Manager: ${SECRET_ADMIN_PASS} (not printed)."
+if [ "$SEED_DEMO_DATA" = "true" ]; then
+  printf '%s\n' "Demo Password  : Stored in Secret Manager: ${SECRET_DEMO_PASS} (not printed)."
+fi
 printf '%s\n' "=================================================================="
