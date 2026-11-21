@@ -1,0 +1,86 @@
+name: CI & Docker Build
+
+on:
+  workflow_call:
+  pull_request:
+    branches: [main, staging]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Job id must stay `test-and-docker` (used as required check in Episode 6).
+  test-and-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: survey
+          POSTGRES_PASSWORD: change-me-db-password
+          POSTGRES_DB: survey
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U survey -d survey"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Check deployment scripts without accessing GCP
+        run: |
+          bash -n deploy/deploy.sh deploy/release.sh
+          bash deploy/tests/test_deploy_stub.sh
+          bash deploy/tests/test_release_stub.sh
+          python3 -m unittest discover -s deploy/tests -p 'test_smoke.py'
+
+      - name: Install, Migrate, Seed, Typecheck, Test & Build (Monorepo)
+        env:
+          NODE_ENV: development
+          PORT: "8080"
+          DB_PASSWORD: change-me-db-password
+          DATABASE_URL: postgresql://survey:change-me-db-password@localhost:5432/survey
+          TEST_DATABASE_URL: postgresql://survey:change-me-db-password@localhost:5432/survey_test
+          JWT_SECRET: change-me-use-a-long-random-value-min-32-chars
+          JWT_EXPIRES_MINUTES: "60"
+          BCRYPT_COST: "10"
+          ANON_MIN_RESPONSES: "5"
+          SEED_PASSWORD: change-me-seed-password
+          APP_VERSION: ${{ github.sha }}
+          LOG_LEVEL: silent
+        run: |
+          npm ci
+          npm run setup -w server
+          npx prisma migrate deploy --schema=server/prisma/schema.prisma
+          DATABASE_URL="$TEST_DATABASE_URL" npx prisma migrate deploy --schema=server/prisma/schema.prisma
+          npm run seed
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Verify Unified Production Dockerfile Build
+        run: |
+          docker build --build-arg APP_VERSION="${{ github.sha }}" -t guessless:ci .
