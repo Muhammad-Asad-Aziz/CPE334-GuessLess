@@ -1,31 +1,15 @@
-# ============================================================================
-# deploy.yml - deploy this repository to the Google Cloud resources of your team
-# Save as: .github/workflows/deploy.yml  (the file name and the branch main must stay exactly like this)
-#
-# How it works
-#   - Triggers: push to main, or run it by hand (workflow_dispatch).
-#   - It signs in to Google Cloud with Workload Identity Federation (WIF): no key file, no secret in GitHub.
-#   - It builds the Dockerfile at the root of the repository, pushes the image to your team's Artifact Registry
-#     repository and deploys it to your team's Cloud Run service.
-#
-# Do not rename (the portal WIF rule is bound to these):
-#   - this file name deploy.yml on branch main
-#   - environment: demo   (create it in GitHub: Settings -> Environments -> New environment -> demo)
-#   - permissions id-token: write
-#
-# Set these four variables in the GitHub environment demo (values: portal, Team resources tab):
-#   GCP_PROJECT_ID, GCP_REGION, WIF_PROVIDER, WIF_SERVICE_ACCOUNT
-# Optional variables:
-#   APP_PORT         port your container listens on if it is not 8080
-#   MIGRATE_COMMAND  command that migrates your database, e.g. "python manage.py migrate" or "npx prisma migrate deploy".
-#                    Leave it unset if you do not need a migration: the migrate step is then skipped.
-# ============================================================================
-name: Deploy to Google Cloud
+name: Deploy demo
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Rollback: full commit SHA of an existing image. Empty = test, build and deploy current main.'
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -35,72 +19,74 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    if: github.ref == 'refs/heads/main' && !inputs.image_tag
+    uses: ./.github/workflows/ci-docker.yml
+
   deploy:
+    needs: test
+    if: >-
+      always() && !cancelled() && github.ref == 'refs/heads/main' &&
+      (needs.test.result == 'success' ||
+       (github.event_name == 'workflow_dispatch' && inputs.image_tag != '' && needs.test.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: github.ref == 'refs/heads/main'
     environment: demo
     permissions:
       contents: read
-      id-token: write # required for the keyless Google Cloud sign-in (WIF)
+      id-token: write
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       REGION: ${{ vars.GCP_REGION }}
-      # Names of your team's resources (assigned by the portal)
       SERVICE_NAME: s40fcb4ce
       MIGRATE_JOB_NAME: s40fcb4ce-migrate
-      AR_REPOSITORY: s40fcb4ce
-      IMAGE_NAME: s40fcb4ce
-      APP_PORT: ${{ vars.APP_PORT }}
-      MIGRATE_COMMAND: ${{ vars.MIGRATE_COMMAND }}
+      IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+      ROLLBACK: ${{ inputs.image_tag != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Check settings and Dockerfile
+      - name: Validate deployment settings
         env:
           WIF_PROVIDER: ${{ vars.WIF_PROVIDER }}
           WIF_SERVICE_ACCOUNT: ${{ vars.WIF_SERVICE_ACCOUNT }}
         run: |
-          for name in PROJECT_ID REGION WIF_PROVIDER WIF_SERVICE_ACCOUNT; do
-            [ -n "${!name}" ] || { echo "Missing GitHub variable for $name (see the portal, Team resources tab)"; exit 1; }
-          done
-          [ -f Dockerfile ] || { echo 'No Dockerfile at the root of the repository'; exit 1; }
+          test -n "$PROJECT_ID" && test -n "$REGION"
+          test -n "$WIF_PROVIDER" && test -n "$WIF_SERVICE_ACCOUNT"
+          [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]] || { echo 'Image tag must be a full 40-character commit SHA.'; exit 1; }
 
-      - name: Sign in to Google Cloud (no key file)
+      - name: Authenticate to Google Cloud without a key
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ vars.WIF_PROVIDER }}
           service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
 
-      - name: Build and push the image
+      - name: Build and push image
+        if: env.ROLLBACK != 'true'
         run: |
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
           IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/s40fcb4ce/s40fcb4ce:$IMAGE_TAG"
           docker build --build-arg APP_VERSION="$IMAGE_TAG" --tag "$IMAGE" .
           docker push "$IMAGE"
 
-      # OPTIONAL: runs only when the repository variable MIGRATE_COMMAND is set.
-      # It points the migrate job of your team at the new image, then runs your command and waits for it to finish.
-      # The deploy below only happens if the migration succeeds.
-      - name: Run database migration (optional)
-        if: env.MIGRATE_COMMAND != ''
-        run: |
-          gcloud run jobs update "$MIGRATE_JOB_NAME" --image "$IMAGE" --region "$REGION" --project "$PROJECT_ID" \
-            --command=sh --args="^@@^-c@@$MIGRATE_COMMAND" --quiet
-          gcloud run jobs execute "$MIGRATE_JOB_NAME" --region "$REGION" --project "$PROJECT_ID" --wait
+      - name: Verify image, migrate and deploy
+        run: bash deploy/release.sh
 
-      - name: Deploy to Cloud Run
-        run: |
-          PORT_ARGS=()
-          if [ -n "$APP_PORT" ]; then PORT_ARGS=(--port "$APP_PORT"); fi
-          gcloud run deploy "$SERVICE_NAME" --image "$IMAGE" --region "$REGION" --project "$PROJECT_ID" "${PORT_ARGS[@]}" --quiet
+      - name: Setup Python 3.14
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
 
-      - name: Summary
+      - name: Smoke test public URL
+        env:
+          SMOKE_EMAIL: ${{ vars.SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+        run: python3 deploy/smoke_test.py "$SERVICE_URL"
+
+      - name: Record deployment
         run: |
-          URL="$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')"
           {
             echo '### GuessLess demo deployment'
             echo "- Commit image tag: \`$IMAGE_TAG\`"
