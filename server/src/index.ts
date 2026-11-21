@@ -11,8 +11,11 @@ async function startServer() {
     await prisma.$connect();
     logger.info('Database connection established successfully.');
 
-    const server = app.listen(config.PORT, () => {
-      logger.info({ port: config.PORT, env: config.NODE_ENV, version: config.APP_VERSION }, `GuessLess server listening on port ${config.PORT}`);
+    const server = app.listen(config.PORT, '0.0.0.0', () => {
+      logger.info(
+        { port: config.PORT, env: config.NODE_ENV, version: config.APP_VERSION },
+        `GuessLess server listening on 0.0.0.0:${config.PORT}`
+      );
     });
 
     const gracefulShutdown = async (signal: string) => {
@@ -39,4 +42,3 @@ async function startServer() {
 }
 
 startServer();
-
