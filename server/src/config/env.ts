@@ -18,11 +18,7 @@ const configSchema = z
         required_error: "Missing required environment variable 'DATABASE_URL'",
       })
       .min(1, "Missing required environment variable 'DATABASE_URL'"),
-    TEST_DATABASE_URL: z
-      .string({
-        required_error: "Missing required environment variable 'TEST_DATABASE_URL'",
-      })
-      .min(1, "Missing required environment variable 'TEST_DATABASE_URL'"),
+    TEST_DATABASE_URL: z.string().optional(),
     JWT_SECRET: z
       .string({
         required_error: "Missing required environment variable 'JWT_SECRET'",
@@ -46,6 +42,15 @@ const configSchema = z
       .default('info'),
   })
   .superRefine((data, ctx) => {
+    // Require TEST_DATABASE_URL only in test mode (not present on Cloud Run)
+    if (data.NODE_ENV === 'test' && (!data.TEST_DATABASE_URL || data.TEST_DATABASE_URL.trim().length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TEST_DATABASE_URL'],
+        message: "Missing required environment variable 'TEST_DATABASE_URL'",
+      });
+    }
+
     // TEST-NFR-02 / SR-05: In production or development, BCRYPT_COST must be >= 10.
     // In test environment, cost >= 4 is permitted.
     if (data.NODE_ENV === 'test') {
@@ -90,4 +95,3 @@ export function getConfig(): Config {
   }
   return cachedConfig;
 }
-
