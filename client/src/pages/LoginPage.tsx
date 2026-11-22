@@ -111,6 +111,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, currentUse
             G
           </span>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Sign in to GuessLess</h1>
+          <h2 className="text-2xl font-bold text-gray-900 tracking-tight">RELEASE 2</h2>
+
           <p className="mt-1 text-sm text-gray-500">
             Enter your department credentials to access your account.
           </p>
