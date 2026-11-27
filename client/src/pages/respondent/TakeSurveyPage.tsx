@@ -25,6 +25,7 @@ interface SurveyFormData {
   title: string;
   description: string;
   mode: 'IDENTIFIED' | 'ANONYMOUS';
+  maxResponses: number | null;
   alreadyResponded: boolean;
   questions: QuestionData[];
 }
@@ -245,10 +246,15 @@ export const TakeSurveyPage: React.FC = () => {
       </Link>
 
       <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm mb-6">
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex flex-wrap items-center gap-2 mb-2">
           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
             Identified
           </span>
+          {survey.maxResponses !== null && (
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200">
+              Limit: {survey.maxResponses} responses
+            </span>
+          )}
         </div>
         <h1 className="text-2xl font-bold text-gray-900">{survey.title}</h1>
         {survey.description && (

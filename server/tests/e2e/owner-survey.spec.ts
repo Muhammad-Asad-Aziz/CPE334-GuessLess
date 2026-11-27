@@ -209,4 +209,81 @@ test.describe('F-02 Owner Survey Lifecycle E2E', () => {
       await cleanupSurveys(createdSurveyIds);
     }
   });
+
+  test('TEST-F02-10 (E2E): create capped and unlimited surveys in builder and display quota in list & detail', async ({
+    page,
+  }, testInfo) => {
+    const createdSurveyIds: string[] = [];
+
+    try {
+      await loginAs(page, 'owner1@example.edu');
+      await page.goto('/my-surveys/new');
+      await assertNoHorizontalOverflow(page);
+
+      const limitInput = page.locator('#survey-max-responses');
+      await expect(limitInput).toBeVisible();
+
+      // Invalid boundaries (0 and 1001) trigger client validation error without leaving page
+      await limitInput.fill('0');
+      await page.getByRole('button', { name: 'Save draft' }).click();
+      await expect(page.locator('#survey-max-responses-error')).toBeVisible();
+      await expect(page).toHaveURL(/\/my-surveys\/new$/);
+
+      await limitInput.fill('1001');
+      await page.getByRole('button', { name: 'Save draft' }).click();
+      await expect(page.locator('#survey-max-responses-error')).toBeVisible();
+      await expect(page).toHaveURL(/\/my-surveys\/new$/);
+
+      // 1. Create capped survey (maxResponses = 5)
+      const cappedTitle = `E2E Capped Quota ${testInfo.project.name} ${Date.now()}-${crypto.randomUUID().slice(0, 6)}`;
+      await page.fill('#survey-title', cappedTitle);
+      await limitInput.fill('5');
+      await page.getByRole('button', { name: 'Add question' }).click();
+      await page.selectOption('[data-field-key="questions-0-type"]', 'RATING');
+      await page.fill('[data-field-key="questions-0-text"]', 'Rate capped draft');
+      await page.getByRole('button', { name: 'Save draft' }).click();
+
+      await expect(page).toHaveURL(/\/my-surveys\/[0-9a-f-]+$/);
+      const cappedId = extractSurveyIdFromUrl(page.url());
+      if (cappedId) createdSurveyIds.push(cappedId);
+
+      await expect(page.getByRole('status')).toContainText('Draft saved.');
+      await expect(page.locator('body')).toContainText('0 / 5');
+      await assertNoHorizontalOverflow(page);
+
+      // 2. Create unlimited survey (Response limit left blank)
+      await page.goto('/my-surveys/new');
+      const unlimTitle = `E2E Unlimited Quota ${testInfo.project.name} ${Date.now()}-${crypto.randomUUID().slice(0, 6)}`;
+      await page.fill('#survey-title', unlimTitle);
+      await page.getByRole('button', { name: 'Add question' }).click();
+      await page.selectOption('[data-field-key="questions-0-type"]', 'RATING');
+      await page.fill('[data-field-key="questions-0-text"]', 'Rate unlimited draft');
+      await page.getByRole('button', { name: 'Save draft' }).click();
+
+      await expect(page).toHaveURL(/\/my-surveys\/[0-9a-f-]+$/);
+      const unlimId = extractSurveyIdFromUrl(page.url());
+      if (unlimId) createdSurveyIds.push(unlimId);
+
+      await expect(page.locator('body')).toContainText('Unlimited');
+      await assertNoHorizontalOverflow(page);
+
+      // 3. Verify both appear with expected quota display on /my-surveys
+      await page.goto('/my-surveys');
+      const isDesktopOrTablet = (page.viewportSize()?.width ?? 1280) >= 768;
+      if (isDesktopOrTablet) {
+        const cappedRow = page.locator('tbody tr', { hasText: cappedTitle });
+        await expect(cappedRow).toContainText('0 / 5');
+        const unlimRow = page.locator('tbody tr', { hasText: unlimTitle });
+        await expect(unlimRow).toContainText('Unlimited');
+      } else {
+        const cappedCard = page.locator('ul li', { hasText: cappedTitle });
+        await expect(cappedCard).toContainText('0 / 5');
+        const unlimCard = page.locator('ul li', { hasText: unlimTitle });
+        await expect(unlimCard).toContainText('Unlimited');
+      }
+      await assertNoHorizontalOverflow(page);
+    } finally {
+      await cleanupSurveys(createdSurveyIds);
+    }
+  });
 });

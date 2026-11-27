@@ -114,6 +114,7 @@ describe('F-04 Aggregate Survey Results Summary Integration Tests', () => {
         title: 'Seed: CPE334 Course Evaluation',
         status: 'PUBLISHED',
         totalResponses: 3,
+        maxResponses: null,
         suppressed: false,
         suppressionReason: null,
         questions: [
@@ -209,6 +210,7 @@ describe('F-04 Aggregate Survey Results Summary Integration Tests', () => {
         title: 'Empty Published Survey',
         status: 'PUBLISHED',
         totalResponses: 0,
+        maxResponses: null,
         suppressed: false,
         suppressionReason: null,
         questions: [

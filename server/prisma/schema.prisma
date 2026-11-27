@@ -59,6 +59,7 @@ model Survey {
   mode        ResponseMode @default(IDENTIFIED)
   status      SurveyStatus @default(DRAFT)
   eligibility Eligibility  @default(ALL)
+  maxResponses Int?
   publishedAt DateTime?
   closeAt     DateTime?
   closedAt    DateTime?

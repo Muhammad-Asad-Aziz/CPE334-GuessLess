@@ -146,7 +146,10 @@ export const SummaryPage: React.FC = () => {
           </span>
         </div>
         <p className="text-base font-semibold text-gray-800">
-          Total responses: {summary.totalResponses}
+          Total responses:{' '}
+          {summary.maxResponses !== null
+            ? `${summary.totalResponses} / ${summary.maxResponses}`
+            : summary.totalResponses}
         </p>
       </header>
 

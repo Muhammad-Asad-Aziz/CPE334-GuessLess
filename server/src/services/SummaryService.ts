@@ -14,6 +14,7 @@ export interface SurveySummaryDto {
   title: string;
   status: SurveyStatus;
   totalResponses: number;
+  maxResponses: number | null;
   suppressed: boolean;
   suppressionReason: string | null;
   questions: SummaryQuestionResult[];
@@ -63,6 +64,7 @@ export class SummaryService {
         id: true,
         title: true,
         status: true,
+        maxResponses: true,
         closeAt: true,
         questions: {
           orderBy: { position: 'asc' },
@@ -184,6 +186,7 @@ export class SummaryService {
       title: survey.title,
       status,
       totalResponses: computed.totalResponses,
+      maxResponses: survey.maxResponses,
       suppressed: false,
       suppressionReason: null,
       questions: computed.questions,
