@@ -61,6 +61,7 @@ export class ResponseService {
       description: s.description,
       mode: s.mode,
       questionCount: s._count.questions,
+      maxResponses: s.maxResponses,
       closeAt: s.closeAt,
       alreadyResponded: participatedSurveyIds.has(s.id),
     }));
@@ -119,6 +120,7 @@ export class ResponseService {
         title: survey.title,
         description: survey.description,
         mode: survey.mode,
+        maxResponses: survey.maxResponses,
         alreadyResponded: Boolean(participation),
         questions: survey.questions.map((q) => ({
           id: q.id,
@@ -150,6 +152,9 @@ export class ResponseService {
     testAnswerWriter?: (tx: any, responseId: string) => Promise<void>
   ) {
     return prisma.$transaction(async (tx) => {
+      // 0. Acquire row lock on target Survey to serialize concurrent final-slot submissions (CHG-14, NFR-06)
+      await tx.$queryRaw`SELECT id FROM "Survey" WHERE id = ${surveyId}::uuid FOR UPDATE`;
+
       // 1. Read survey with questions and options
       const survey = await tx.survey.findUnique({
         where: { id: surveyId },
@@ -257,6 +262,22 @@ export class ResponseService {
               },
             });
           }
+        }
+      }
+
+      // 8. Quota auto-closure (CHG-14, BR-02, BR-04): atomically close when stored responses reach maxResponses
+      if (survey.maxResponses !== null) {
+        const totalStoredResponses = await tx.response.count({
+          where: { surveyId: survey.id },
+        });
+        if (totalStoredResponses >= survey.maxResponses) {
+          await tx.survey.update({
+            where: { id: survey.id },
+            data: {
+              status: 'CLOSED',
+              closedAt: now,
+            },
+          });
         }
       }
 

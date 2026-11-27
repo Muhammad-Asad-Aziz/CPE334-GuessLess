@@ -153,4 +153,55 @@ describe('TEST-F03-03: Browse Available Surveys (FR-08, BR-02, AC-F03-03)', () =
       expect(res.body.data.questions[0].options.length).toBe(1);
     });
   });
+
+  describe('TEST-F03-10: Available Surveys maxResponses payload (AC-F03-10, FR-08, CHG-14)', () => {
+    it('includes maxResponses (number or null) in available-surveys list and survey form', async () => {
+      const ownerLogin = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: owner.email, password: 'Password1!' });
+      expect(ownerLogin.status).toBe(200);
+      const ownerToken = ownerLogin.body.data.token as string;
+
+      const cappedCreate = await request(app)
+        .post('/api/v1/surveys')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          title: 'Capped Available Survey',
+          maxResponses: 30,
+          questions: [{ type: 'RATING', text: 'Rate capped', required: true }],
+        });
+      expect(cappedCreate.status).toBe(201);
+      const cappedId = cappedCreate.body.data.id as string;
+
+      const pubCapped = await request(app)
+        .post(`/api/v1/surveys/${cappedId}/publish`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({});
+      expect(pubCapped.status).toBe(200);
+
+      const listRes = await request(app)
+        .get('/api/v1/available-surveys')
+        .set('Authorization', `Bearer ${resp3Token}`);
+      expect(listRes.status).toBe(200);
+
+      const cappedItem = listRes.body.data.find((s: any) => s.id === cappedId);
+      const unlimitedItem = listRes.body.data.find((s: any) => s.id === sPub.id);
+      expect(cappedItem).toBeDefined();
+      expect(cappedItem.maxResponses).toBe(30);
+      expect(unlimitedItem).toBeDefined();
+      expect(unlimitedItem.maxResponses).toBeNull();
+
+      const cappedForm = await request(app)
+        .get(`/api/v1/available-surveys/${cappedId}`)
+        .set('Authorization', `Bearer ${resp3Token}`);
+      expect(cappedForm.status).toBe(200);
+      expect(cappedForm.body.data.maxResponses).toBe(30);
+
+      const unlimitedForm = await request(app)
+        .get(`/api/v1/available-surveys/${sPub.id}`)
+        .set('Authorization', `Bearer ${resp3Token}`);
+      expect(unlimitedForm.status).toBe(200);
+      expect(unlimitedForm.body.data.maxResponses).toBeNull();
+    });
+  });
 });

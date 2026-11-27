@@ -9,6 +9,7 @@ export interface SurveyListItem {
   title: string;
   status: SurveyStatus;
   responseCount: number;
+  maxResponses: number | null;
   createdAt: string;
   publishedAt: string | null;
   closeAt: string | null;
@@ -37,6 +38,7 @@ export interface SurveyDetail {
   mode: ResponseMode;
   status: SurveyStatus;
   eligibility: 'ALL' | 'SELECTED';
+  maxResponses: number | null;
   createdAt: string;
   publishedAt: string | null;
   closeAt: string | null;
@@ -76,6 +78,7 @@ export interface SurveySummaryData {
   title: string;
   status: SurveyStatus;
   totalResponses: number;
+  maxResponses: number | null;
   suppressed: boolean;
   suppressionReason: string | null;
   questions: SummaryQuestionItem[];

@@ -170,4 +170,133 @@ test.describe('F-03 Respondent Discovery, Submission & History E2E', () => {
       await cleanupRespondent(emptyResp.id);
     }
   });
+
+  test('TEST-F03-10 (E2E): capped survey shows Limit badge, auto-closes after final response, and disappears from /available', async ({
+    page,
+  }, testInfo) => {
+    const owner1 = await prisma.user.findUnique({ where: { email: 'owner1@example.edu' } });
+    expect(owner1, 'Seeded owner1@example.edu missing; run npm run seed first.').toBeTruthy();
+
+    const suffix = `${testInfo.project.name}-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`;
+    const passwordHash = await bcrypt.hash(SEED_PASSWORD, 4);
+
+    const [tempResp1, tempResp2] = await Promise.all([
+      prisma.user.create({
+        data: {
+          email: `e2e-quota-r1-${suffix}@example.edu`,
+          displayName: 'Quota Resp 1',
+          passwordHash,
+          role: 'RESPONDENT',
+          isActive: true,
+        },
+      }),
+      prisma.user.create({
+        data: {
+          email: `e2e-quota-r2-${suffix}@example.edu`,
+          displayName: 'Quota Resp 2',
+          passwordHash,
+          role: 'RESPONDENT',
+          isActive: true,
+        },
+      }),
+    ]);
+
+    const cappedSurvey = await prisma.survey.create({
+      data: {
+        ownerId: owner1!.id,
+        title: `E2E Quota Limit 1 ${suffix}`,
+        description: 'Capped at 1 response.',
+        mode: 'IDENTIFIED',
+        status: 'PUBLISHED',
+        eligibility: 'ALL',
+        maxResponses: 1,
+        publishedAt: new Date(),
+        questions: {
+          create: [
+            {
+              position: 1,
+              type: 'SINGLE_CHOICE',
+              text: 'Choice Q',
+              required: true,
+              options: {
+                create: [
+                  { position: 1, text: 'Opt A' },
+                  { position: 2, text: 'Opt B' },
+                ],
+              },
+            },
+            {
+              position: 2,
+              type: 'RATING',
+              text: 'Rating Q',
+              required: true,
+            },
+          ],
+        },
+      },
+    });
+
+    const sPub = await prisma.survey.findFirst({
+      where: { ownerId: owner1!.id, title: 'Seed: CPE334 Course Evaluation' },
+      select: { id: true },
+    });
+
+    try {
+      // 1. resp1 sees "Limit: 1 responses" badge on /available (while unlimited S-PUB has no limit badge)
+      await page.goto('/login');
+      await page.fill('#email', tempResp1.email);
+      await page.fill('#password', SEED_PASSWORD);
+      await page.click('button[type="submit"]');
+      await expect(page).toHaveURL(/\/available/);
+
+      const cappedLink = page.locator(`a[href="/available/${cappedSurvey.id}"]`);
+      const cappedCard = page.locator('div.bg-white', { has: cappedLink });
+      await expect(cappedCard).toContainText('Limit: 1 responses');
+
+      if (sPub) {
+        const sPubLink = page.locator(`a[href="/available/${sPub.id}"]`);
+        const sPubCard = page.locator('div.bg-white', { has: sPubLink });
+        await expect(sPubCard).not.toContainText('Limit:');
+      }
+
+      // 2. resp1 opens form, verifies badge, and submits final slot
+      await cappedLink.click();
+      await expect(page).toHaveURL(new RegExp(`/available/${cappedSurvey.id}$`));
+      await expect(page.locator('body')).toContainText('Limit: 1 responses');
+
+      await page.locator('label').filter({ hasText: 'Opt A' }).click();
+      await page.locator('label').filter({ hasText: /^5$/ }).click();
+      await page.locator('button[type="submit"]:has-text("Submit")').click();
+      await expect(page.locator('body')).toContainText('Response submitted on');
+
+      // 3. resp2 logs in: capped survey is gone from /available and direct URL shows closed
+      await page.evaluate(() => sessionStorage.removeItem('auth_token'));
+      await page.goto('/login');
+      await page.fill('#email', tempResp2.email);
+      await page.fill('#password', SEED_PASSWORD);
+      await page.click('button[type="submit"]');
+      await expect(page).toHaveURL(/\/available/);
+
+      await expect(page.locator('body')).not.toContainText(cappedSurvey.title);
+
+      await page.goto(`/available/${cappedSurvey.id}`);
+      await expect(page.locator('body')).toContainText('This survey is closed.');
+
+      // 4. resp1 still sees survey as Closed in /my-responses
+      await page.evaluate(() => sessionStorage.removeItem('auth_token'));
+      await page.goto('/login');
+      await page.fill('#email', tempResp1.email);
+      await page.fill('#password', SEED_PASSWORD);
+      await page.click('button[type="submit"]');
+      await expect(page).toHaveURL(/\/available/);
+
+      await page.goto('/my-responses');
+      await expect(page.locator('body')).toContainText(cappedSurvey.title);
+      await expect(page.locator('body')).toContainText('Closed');
+    } finally {
+      await cleanupRespondent(tempResp1.id);
+      await cleanupRespondent(tempResp2.id);
+      await prisma.survey.deleteMany({ where: { id: cappedSurvey.id } });
+    }
+  });
 });

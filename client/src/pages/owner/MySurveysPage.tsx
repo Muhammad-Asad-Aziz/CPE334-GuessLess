@@ -175,7 +175,16 @@ export const MySurveysPage: React.FC = () => {
                         </span>
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums text-gray-800 whitespace-nowrap">
-                        {survey.responseCount}
+                        {survey.maxResponses !== null ? (
+                          <span>
+                            {survey.responseCount} / {survey.maxResponses}
+                          </span>
+                        ) : (
+                          <>
+                            <span>{survey.responseCount}</span>
+                            <div className="text-xs font-normal text-gray-500">Unlimited</div>
+                          </>
+                        )}
                       </td>
                       <td className="px-3 py-3 text-xs text-gray-600 whitespace-nowrap tabular-nums">
                         {formatBangkokDateTime(survey.createdAt)}
@@ -241,7 +250,14 @@ export const MySurveysPage: React.FC = () => {
                     <div>
                       <dt className="font-medium text-gray-500">Responses</dt>
                       <dd className="mt-0.5 text-sm font-semibold text-gray-900 tabular-nums">
-                        {survey.responseCount}
+                        {survey.maxResponses !== null ? (
+                          `${survey.responseCount} / ${survey.maxResponses}`
+                        ) : (
+                          <span>
+                            {survey.responseCount}{' '}
+                            <span className="text-xs font-normal text-gray-500">Unlimited</span>
+                          </span>
+                        )}
                       </dd>
                     </div>
                     <div>
