@@ -1,7 +1,7 @@
 # F-02 Feature Contract: Survey Creation, Lifecycle & Owner Management (Identified MVP)
 
-**Sprint:** 1 | **File:** `docs/sprints/sprint-1/F-02-survey-lifecycle.md` | **Version:** 1.0 (Specified) | **Date:** 12 November 2026
-**Baseline:** `docs/srs.md` v1.0, `docs/system-sds.md` v1.0 | **Status:** Specified
+**Sprint:** 1 | **File:** `docs/sprints/sprint-1/F-02-survey-lifecycle.md` | **Version:** 1.1 (CHG-14: optional maxResponses) | **Date:** 27 November 2026
+**Baseline:** `docs/srs.md` v1.1, `docs/system-sds.md` v1.1 | **Status:** Specified
 **Lead:** Al Xander James Codino Ybanez | **Reviewer:** Muhammad Asad Aziz
 
 ### Revision history
@@ -10,6 +10,7 @@
 |---|---|---|---|
 | 0.1 | 2026-11-07 | Muhammad Asad Aziz (Author 1, AI-assisted draft) | Initial contract |
 | 1.0 | 2026-11-12 | Muhammad Asad Aziz & Al Xander James Codino Ybanez | Partner review complete; contract approved as v1.0 (Specified) before implementation |
+| 1.1 | 2026-11-27 | Muhammad Asad Aziz & Al Xander James Codino Ybanez | Lab 7 CHG-14 (Issue #42): added optional nullable `maxResponses` (integer 1–1,000 or `null`/omitted = unlimited), migration `0003_add_survey_max_responses`, owner API/UI quota display, quota auto-closure transition compatibility, and `AC-F02-10` / `TEST-F02-10` |
 
 ---
 
@@ -36,31 +37,31 @@
 stateDiagram-v2
   [*] --> DRAFT: create (may be incomplete)
   DRAFT --> PUBLISHED: publish (all publish checks pass)
-  PUBLISHED --> CLOSED: close
+  PUBLISHED --> CLOSED: close or maxResponses reached
   CLOSED --> [*]
 ```
 
-Only the two transitions shown are allowed (`canTransition`). Every other request — publishing a `PUBLISHED` or `CLOSED` survey, closing a `DRAFT` or `CLOSED` survey — is rejected with `409 INVALID_STATE_TRANSITION` and changes nothing. There is no endpoint that returns a survey to `DRAFT`. In Sprint 1 there is no close date, so the effective status equals the stored status; the code still reads status through `effectiveStatus(survey, now)` so that Sprint 2 needs no change here.
+Only the two transitions shown are allowed (`canTransition`). `PUBLISHED -> CLOSED` occurs either via manual owner close (`FR-11`) or atomically inside F-03's submit transaction when stored responses reach `maxResponses` (`CHG-14`, setting `status = CLOSED` and `closedAt = now`). Every other request — publishing a `PUBLISHED` or `CLOSED` survey, closing a `DRAFT` or `CLOSED` survey (including a survey already auto-closed at quota) — is rejected with `409 INVALID_STATE_TRANSITION` and changes nothing. There is no endpoint that returns a survey to `DRAFT`. In Sprint 1 there is no close date, so the effective status equals the stored status; the code still reads status through `effectiveStatus(survey, now)` so that Sprint 2 needs no change here.
 
 ### 2.2 Workflows
 
-**Create (FR-01)**: the owner builds the survey on `/my-surveys/new` and clicks "Save draft". The API validates the body against the save-draft limits (Section 2.3), creates the survey with `ownerId` = the caller, status `DRAFT`, mode `IDENTIFIED`, eligibility `ALL`, and creates its questions and options in one transaction, with positions taken from the array order (starting at 1). It returns the full survey.
+**Create (FR-01)**: the owner builds the survey on `/my-surveys/new` and clicks "Save draft". The API validates the body against the save-draft limits (Section 2.3), including optional nullable `maxResponses` (integer 1–1,000 or `null`/omitted for unlimited), creates the survey with `ownerId` = the caller, status `DRAFT`, mode `IDENTIFIED`, eligibility `ALL`, `maxResponses` = `input.maxResponses ?? null`, and creates its questions and options in one transaction, with positions taken from the array order (starting at 1). It returns the full survey including `maxResponses`.
 
 **Publish (FR-02, BR-04)**, in this order:
 1. Load the survey with `where { id, ownerId: caller }`. Not found → `404`.
 2. If its effective status is not `DRAFT` → `409 INVALID_STATE_TRANSITION`.
-3. Run `publishChecks(survey)`, which returns **every** failed check:
+3. Run `publishChecks(survey)`, which returns **every** failed check (unchanged by `maxResponses`):
    - title empty or only spaces → `{ field: "title", issue: "must not be empty to publish" }`
    - no questions → `{ field: "questions", issue: "at least 1 question is required to publish" }`
    - each choice question with fewer than 2 options → `{ field: "questions[i].options", issue: "a choice question needs at least 2 options to publish" }` (`i` is the zero-based index in position order)
    If any fail → `400 VALIDATION_ERROR` with all of them in `details`; nothing changes.
-4. Update with a conditional write (`where { id, ownerId, status: 'DRAFT' }`) setting `status = PUBLISHED`, `publishedAt = now`. If no row was updated because another request changed the status first → `409 INVALID_STATE_TRANSITION`.
+4. Update with a conditional write (`where { id, ownerId, status: 'DRAFT' }`) setting `status = PUBLISHED`, `publishedAt = now`, and return the full survey including `maxResponses`. If no row was updated because another request changed the status first → `409 INVALID_STATE_TRANSITION`.
 
-**Close (FR-11)**: load own survey (`404` if not found); if effective status is not `PUBLISHED` → `409`; conditional update (`where { …, status: 'PUBLISHED' }`) setting `status = CLOSED`, `closedAt = now`. Responses are not touched.
+**Close (FR-11)**: load own survey (`404` if not found); if effective status is not `PUBLISHED` (including surveys already auto-closed at `maxResponses`) → `409 INVALID_STATE_TRANSITION`; conditional update (`where { …, status: 'PUBLISHED' }`) setting `status = CLOSED`, `closedAt = now`, and return the full survey including `maxResponses`. Responses are not touched.
 
-**List (FR-10)**: own surveys only, newest first, paginated, each with effective status and response count (`COUNT` of `Response` rows grouped by survey).
+**List (FR-10)**: own surveys only, newest first, paginated, each with effective status, response count (`COUNT` of `Response` rows grouped by survey), and `maxResponses: number | null`.
 
-**Read one**: own survey with ordered questions and options.
+**Read one**: own survey with `maxResponses: number | null` and ordered questions and options.
 
 ### 2.3 Validation (save-draft limits, SRS Section 6)
 
@@ -69,6 +70,7 @@ Only the two transitions shown are allowed (`canTransition`). Every other reques
 | `title` | Optional string, trimmed, 0–120 characters (default `""`) |
 | `description` | Optional string, 0–1,000 characters (default `""`) |
 | `mode` | Optional; only `"IDENTIFIED"` is accepted in Sprint 1 (`"ANONYMOUS"` → `400`, issue "is not available yet") |
+| `maxResponses` | Optional nullable integer; `null` or omitted = unlimited (default `null`); when provided, integer `1–1000` (`0`, `-1`, `1001`, `2.5`, or non-numeric → `400 VALIDATION_ERROR` naming `maxResponses`) |
 | `questions` | Optional array, 0–30 items (default `[]`) |
 | `questions[i].type` | Required; `"SINGLE_CHOICE"` or `"RATING"` in Sprint 1 |
 | `questions[i].text` | Required string, trimmed, 1–300 characters |
@@ -100,6 +102,8 @@ The rating scale is fixed at 1–5 and is not configurable per question.
 | Publish a draft that fails several checks | `400` listing every failed check |
 | Publish twice at the same moment | One `200`, one `409` |
 | Survey id that is not a UUID | `404` |
+| `maxResponses` omitted, `null`, `1`, or `1000` | Accepted (both draft save and publish) |
+| `maxResponses` `0`, `-1`, `1001`, `2.5`, or non-numeric | `400 VALIDATION_ERROR` naming `maxResponses` |
 
 ### 2.6 Permissions
 
@@ -116,9 +120,9 @@ The rating scale is fixed at 1–5 and is not configurable per question.
 
 | Screen | Behavior |
 |---|---|
-| `/my-surveys` | List of own surveys: title (or "Untitled survey"), status badge (Draft, Published, Closed), response count, created, published and closed dates in Bangkok time. "Create survey" button. Empty state: "No surveys yet. Create your first survey." Table on wide screens, stacked cards below 768 px. Skeleton while loading; error banner with `requestId` on failure. |
-| `/my-surveys/new` | Title and description fields; response mode shown as "Identified — respondents are told that their answers are linked to their name." Add up to 30 questions; each has a type selector (Single choice, Rating 1–5), text, "Required" checkbox (checked by default), and for single choice an options list (add, remove, up to 10). Questions can be moved up and down and removed. Client checks mirror Section 2.3; an incomplete survey can still be saved. "Save draft" is disabled while sending; on success the browser goes to the survey's detail page with the message "Draft saved." Server field errors from `details` are shown next to the fields. |
-| `/my-surveys/:surveyId` | Read-only view of title, description, mode, status, dates and questions in order. **Draft**: "Publish" button; on `400` a list "This survey cannot be published yet:" with one line per failed check; text "Editing drafts arrives in Sprint 2." **Published**: "Close survey" button with a confirmation dialog "Closing is final. No new responses will be accepted."; "View summary" link. **Closed**: "View summary" link. On `404` shows "Survey not found." |
+| `/my-surveys` | List of own surveys: title (or "Untitled survey"), status badge (Draft, Published, Closed), response count and quota (`responseCount / maxResponses`, e.g., `1 / 1`, or `"Unlimited"` when `maxResponses` is `null`), created, published and closed dates in Bangkok time. "Create survey" button. Empty state: "No surveys yet. Create your first survey." Table on wide screens, stacked cards below 768 px. Skeleton while loading; error banner with `requestId` on failure. |
+| `/my-surveys/new` | Title and description fields; optional numeric input `"Response limit (optional, 1–1000)"` (blank = unlimited); response mode shown as "Identified — respondents are told that their answers are linked to their name." Add up to 30 questions; each has a type selector (Single choice, Rating 1–5), text, "Required" checkbox (checked by default), and for single choice an options list (add, remove, up to 10). Questions can be moved up and down and removed. Client checks mirror Section 2.3 (including integer 1–1,000 when response limit is filled); an incomplete survey can still be saved. "Save draft" is disabled while sending; on success the browser goes to the survey's detail page with the message "Draft saved." Server field errors from `details` are shown next to the fields. |
+| `/my-surveys/:surveyId` | Read-only view of title, description, mode, status, response quota (`responseCount / maxResponses`, e.g., `1 / 1`, or `"Unlimited"` when `null`), dates and questions in order. **Draft**: "Publish" button; on `400` a list "This survey cannot be published yet:" with one line per failed check; text "Editing drafts arrives in Sprint 2." **Published**: "Close survey" button with a confirmation dialog "Closing is final. No new responses will be accepted."; "View summary" link. **Closed**: "View summary" link. On `404` shows "Survey not found." |
 
 ---
 
@@ -133,6 +137,7 @@ Request:
   "title": "Lab feedback",
   "description": "Week 10 lab",
   "mode": "IDENTIFIED",
+  "maxResponses": 30,
   "questions": [
     { "type": "SINGLE_CHOICE", "text": "Was the lab clear?", "required": true,
       "options": [ { "text": "Yes" }, { "text": "No" } ] },
@@ -141,7 +146,7 @@ Request:
 }
 ```
 
-`201 Created` with the survey detail (Section 4.3 shape). Errors: `400 VALIDATION_ERROR`, `401`, `403`.
+`maxResponses` may be omitted or `null` for unlimited surveys. `201 Created` with the survey detail (Section 4.3 shape). Errors: `400 VALIDATION_ERROR`, `401`, `403`.
 
 ### 4.2 `GET /api/v1/surveys?page=1&pageSize=20` (Survey Owner)
 
@@ -150,7 +155,7 @@ Request:
 ```json
 {
   "data": [
-    { "id": "s1…", "title": "Lab feedback", "status": "PUBLISHED", "responseCount": 2,
+    { "id": "s1…", "title": "Lab feedback", "status": "PUBLISHED", "responseCount": 2, "maxResponses": 30,
       "createdAt": "2026-11-07T02:00:00.000Z", "publishedAt": "2026-11-07T02:05:00.000Z",
       "closeAt": null, "closedAt": null }
   ],
@@ -169,6 +174,7 @@ Errors: `400` (page or pageSize out of range), `401`, `403`.
   "data": {
     "id": "s1…", "title": "Lab feedback", "description": "Week 10 lab",
     "mode": "IDENTIFIED", "status": "DRAFT", "eligibility": "ALL",
+    "maxResponses": 30,
     "createdAt": "…", "publishedAt": null, "closeAt": null, "closedAt": null,
     "responseCount": 0,
     "questions": [
@@ -204,9 +210,9 @@ Request: no body. `200 OK` with the survey detail (`status` `CLOSED`, `closedAt`
 
 | Item | Specification |
 |---|---|
-| Tables used | `Survey` (`id`, `ownerId`, `title`, `description`, `mode`, `status`, `eligibility`, `publishedAt`, `closeAt`, `closedAt`, `createdAt`, `updatedAt`), `Question` (`id`, `surveyId`, `position`, `type`, `text`, `required`), `Option` (`id`, `questionId`, `position`, `text`); reads `Response` for counts |
-| Migration | No change. All tables and constraints come from F-01's `0001_initial_schema` and `0002_check_constraints` |
-| Constraints relied on | FK `Survey.ownerId`; unique `(surveyId, position)` and `(questionId, position)`; `question_position_chk`, `option_position_chk`; `survey_published_at_chk`; `survey_closed_at_chk`; column lengths 120 / 1,000 / 300 / 100 |
+| Tables used | `Survey` (`id`, `ownerId`, `title`, `description`, `mode`, `status`, `eligibility`, `maxResponses`, `publishedAt`, `closeAt`, `closedAt`, `createdAt`, `updatedAt`), `Question` (`id`, `surveyId`, `position`, `type`, `text`, `required`), `Option` (`id`, `questionId`, `position`, `text`); reads `Response` for counts |
+| Migration | Sprint 1 base schema from `0001_initial_schema` and `0002_check_constraints`; CHG-14 adds backward-compatible expand-only migration `0003_add_survey_max_responses` adding nullable `Survey.maxResponses Int?` (existing rows default to `NULL` = unlimited) and `survey_max_responses_chk` |
+| Constraints relied on | FK `Survey.ownerId`; unique `(surveyId, position)` and `(questionId, position)`; `question_position_chk`, `option_position_chk`; `survey_published_at_chk`; `survey_closed_at_chk`; `survey_max_responses_chk` (`CHECK ("maxResponses" IS NULL OR "maxResponses" BETWEEN 1 AND 1000)`); column lengths 120 / 1,000 / 300 / 100 |
 | Seed | `prisma/seed.ts` adds S-PUB, S-DRAFT and S-CLOSED (`README.md` Section 3.3), upserted by fixed ids so the seed is repeatable |
 
 ---
@@ -382,6 +388,37 @@ API and UI verification of this rule follow in Sprint 2 with FR-12 (CHG-02).
 - **When** resp1 sends `GET /api/v1/surveys/{S}`
 - **Then** the response is `403 FORBIDDEN`
 
+### AC-F02-10 — Owner can configure an optional response quota `maxResponses` (FR-01, FR-10, CHG-14)
+
+**Scenario Outline: `maxResponses` boundary validation**
+- **Given** owner1 sends `POST /api/v1/surveys` with an otherwise valid survey body and `maxResponses` set to `<value>`
+- **When** the request is validated and processed
+- **Then** the result is `<result>`
+
+| value | result |
+|---|---|
+| omitted | accepted (`201`, `maxResponses: null`) |
+| `null` | accepted (`201`, `maxResponses: null`) |
+| `1` | accepted (`201`, `maxResponses: 1`) |
+| `1000` | accepted (`201`, `maxResponses: 1000`) |
+| `0` | rejected (`400 VALIDATION_ERROR` naming `maxResponses`) |
+| `-1` | rejected (`400 VALIDATION_ERROR` naming `maxResponses`) |
+| `1001` | rejected (`400 VALIDATION_ERROR` naming `maxResponses`) |
+| `2.5` | rejected (`400 VALIDATION_ERROR` naming `maxResponses`) |
+| `"abc"` (non-numeric) | rejected (`400 VALIDATION_ERROR` naming `maxResponses`) |
+
+**Scenario: persistence, API payloads, and preserved invariants**
+- **Given** owner1 creates a capped survey with `maxResponses: 5` and an unlimited survey with `maxResponses` omitted
+- **When** owner1 calls `POST /api/v1/surveys`, `GET /api/v1/surveys`, `GET /api/v1/surveys/{id}`, `POST /api/v1/surveys/{id}/publish`, and `POST /api/v1/surveys/{id}/close`
+- **Then** every owner payload includes `maxResponses: 5` for the capped survey and `maxResponses: null` for the unlimited survey
+- **And** PostgreSQL stores `5` and `NULL` respectively (`survey_max_responses_chk` allows `NULL` or `1..1000`)
+- **And** incomplete-draft BR-04 publish checks, strict rejection of unknown/server-owned fields (`400`), and unlimited survey lifecycle behavior remain identical to Sprint 1 (`v0.1.0`)
+
+**Scenario: UI builder, list, and detail quota display**
+- **Given** owner1 is on `/my-surveys/new`
+- **When** owner1 enters `"Response limit (optional, 1–1000)"` as `5` (and for another survey leaves it blank) and saves
+- **Then** `/my-surveys` and `/my-surveys/:surveyId` display `0 / 5` (updating to `responseCount / 5` as responses arrive) for the capped survey and `"Unlimited"` for the blank survey
+
 ---
 
 ## 7. Software Test Specification
@@ -397,6 +434,7 @@ API and UI verification of this rule follow in Sprint 2 with FR-12 (CHG-02).
 | TEST-F02-07 | AC-F02-07 | Unit (TDD) | `checkSurveyChange` | Evaluate every row of the Examples table | Results exactly as in the table | `tests/unit/surveyLifecycle.test.ts` › "BR-03 question lock" |
 | TEST-F02-08 | AC-F02-08 | Unit + API + DB | Unit: `canTransition`. API: owner1 owns one survey in each state of the table | Unit: evaluate all 9 pairs. API: send each request; read the DB row | Unit: only the 2 allowed pairs are true. API: each `409 INVALID_STATE_TRANSITION`; status, `publishedAt`, `closedAt` unchanged | `tests/unit/surveyLifecycle.test.ts` › "canTransition"; `tests/integration/surveys.test.ts` › "invalid transitions" |
 | TEST-F02-09 | AC-F02-09 | API + DB | owner1 owns S; owner2 and resp1 logged in | owner2: `GET`, publish, close on S and on a random UUID; resp1: `GET /surveys/{S}` | owner2: every call `404`, body without S's title or questions, bodies equal to the random-UUID responses except `requestId`, S unchanged in DB. resp1: `403` | `tests/integration/surveys.ownership.test.ts` |
+| TEST-F02-10 | AC-F02-10 | Unit + API + DB + E2E | Unit: `createSurveySchema` with each `maxResponses` boundary value. API/DB: owner1 logged in. E2E: owner1 on `/my-surveys/new`, `/my-surveys`, `/my-surveys/:surveyId` | Unit: validate each `maxResponses` row. API/DB: create capped (`1`, `1000`) and unlimited (`null`/omitted) surveys, test invalid values (`0`, `-1`, `1001`, `2.5`, `"abc"`), list, get, publish, close, and inspect DB `Survey.maxResponses`. E2E: create capped & blank-limit surveys via UI and inspect list/detail | Unit & API: accepted values return `201` with `maxResponses: number \| null` across all owner endpoints and match DB; rejected values return `400 VALIDATION_ERROR` naming `maxResponses`. E2E: `"Response limit (optional, 1–1000)"` saves and displays `responseCount / maxResponses` or `"Unlimited"` | `tests/unit/surveySchema.test.ts`; `tests/integration/surveys.test.ts`; `tests/e2e/owner-survey.spec.ts` |
 
 Related NFR tests: TEST-NFR-04 (builder, list and detail screens), TEST-NFR-05 (owner routes), TEST-NFR-07 (a created survey survives restart).
 
@@ -406,7 +444,8 @@ Related NFR tests: TEST-NFR-04 (builder, list and detail screens), TEST-NFR-05 (
 
 The Product Definition of Done items D-1 to D-10 (`definition-of-done.md`) apply. In addition, F-02 is done when:
 
-- TEST-F02-01 to TEST-F02-09 pass on the PR head commit, with red-then-green commits recorded for TEST-F02-04 and TEST-F02-07.
+- TEST-F02-01 to TEST-F02-10 pass on the PR head commit, with red-then-green commits recorded for TEST-F02-04 and TEST-F02-07.
+- Migration `0003_add_survey_max_responses` applies cleanly and preserves `NULL` defaults for existing rows.
 - TEST-F01-05 (role matrix) and TEST-NFR-03 cover all F-02 routes.
 - The seed creates S-PUB, S-DRAFT and S-CLOSED and can be run twice without duplicates.
 - The reviewer has checked in the PR that every Prisma query on `Survey` in the owner routes includes `ownerId`, and that no response exposes `ownerId`.

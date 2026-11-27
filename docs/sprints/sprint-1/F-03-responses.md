@@ -1,7 +1,7 @@
 # F-03 Feature Contract: Survey Discovery, Response Submission & Respondent History
 
-**Sprint:** 1 | **File:** `docs/sprints/sprint-1/F-03-responses.md` | **Version:** 1.0 (Specified) | **Date:** 12 November 2026
-**Baseline:** `docs/srs.md` v1.0, `docs/system-sds.md` v1.0 | **Status:** Specified
+**Sprint:** 1 | **File:** `docs/sprints/sprint-1/F-03-responses.md` | **Version:** 1.1 (CHG-14: quota auto-closure & concurrency) | **Date:** 27 November 2026
+**Baseline:** `docs/srs.md` v1.1, `docs/system-sds.md` v1.1 | **Status:** Specified
 **Lead:** Muhammad Asad Aziz | **Reviewer:** Al Xander James Codino Ybanez
 
 ### Revision history
@@ -10,6 +10,7 @@
 |---|---|---|---|
 | 0.1 | 2026-11-07 | Muhammad Asad Aziz (Author 1, AI-assisted draft) | Initial contract |
 | 1.0 | 2026-11-12 | Muhammad Asad Aziz & Al Xander James Codino Ybanez | Partner review complete; contract approved as v1.0 (Specified) before implementation |
+| 1.1 | 2026-11-27 | Muhammad Asad Aziz & Al Xander James Codino Ybanez | Lab 7 CHG-14 (Issue #42): added parameterized `SELECT ... FOR UPDATE` row lock and atomic quota auto-closure in `ResponseService.submitResponse`, `maxResponses` in available-survey APIs and UI quota badges, and TDD `AC-F03-10`/`TEST-F03-10` & `AC-F03-11`/`TEST-F03-11` |
 
 ---
 
@@ -32,20 +33,21 @@
 
 ### 2.1 Workflows
 
-**Browse (FR-08)**: lists surveys that are open for the caller: stored status `PUBLISHED`, close date absent or in the future, eligibility `ALL` (every active Respondent is eligible in Sprint 1, D-03). Each item carries `alreadyResponded`, true when a `Participation` row exists for (survey, caller). Newest published first, paginated.
+**Browse (FR-08)**: lists surveys that are open for the caller: stored status `PUBLISHED`, close date absent or in the future, eligibility `ALL` (every active Respondent is eligible in Sprint 1, D-03). Surveys auto-closed upon reaching `maxResponses` have stored status `CLOSED` and therefore disappear immediately from this list. Each item carries `alreadyResponded` (true when a `Participation` row exists for `(survey, caller)`) and `maxResponses: number | null`. Newest published first, paginated.
 
-**Open the form**: returns an open survey's questions and options in position order, its mode and `alreadyResponded`. A `DRAFT` or unknown survey → `404`; a closed survey → `409 SURVEY_NOT_OPEN`.
+**Open the form**: returns an open survey's questions and options in position order, its mode, `maxResponses: number | null`, and `alreadyResponded`. A `DRAFT` or unknown survey → `404`; a closed survey (manual or quota auto-closed) → `409 SURVEY_NOT_OPEN`.
 
 **Submit (FR-03)**: one database transaction (SDS Section 3.4), with checks in this order:
 1. `requireRole('RESPONDENT')` → otherwise `403`.
 2. Body shape (strict schema, Section 2.2) → otherwise `400`.
-3. Read the survey with its questions and options. Not found or `DRAFT` → `404 NOT_FOUND`.
+3. Inside the transaction, lock the target `Survey` row using parameterized raw SQL (`SELECT id FROM "Survey" WHERE id = $1::uuid FOR UPDATE`), then read the survey (including `maxResponses`) with its questions and options. Not found or `DRAFT` → `404 NOT_FOUND`.
 4. `effectiveStatus(survey, now)` is `CLOSED` → `409 SURVEY_NOT_OPEN`.
 5. A `Participation` row already exists for (survey, caller) → `409 DUPLICATE_RESPONSE`.
 6. `validateAnswers(survey, answers)` (BR-06) returns every problem → `400 VALIDATION_ERROR` with all of them.
-7. Insert `Participation` (`participatedDay` = `calendarDay(now)`). A unique-constraint violation here (a parallel request won) → roll back, `409 DUPLICATE_RESPONSE`.
+7. Insert `Participation` (`participatedDay` = `calendarDay(now)`). A unique-constraint violation here (a parallel request by the same respondent won) → roll back, `409 DUPLICATE_RESPONSE`.
 8. Insert `Response` (`mode` `IDENTIFIED`, `respondentId` = caller, `submittedAt` = now, `submittedDay` = `calendarDay(now)`), then one `Answer` per answered question and one `AnswerSelection` per chosen option.
-9. Commit and return `201`. Any error in steps 7–8 rolls back everything.
+9. **Quota auto-closure (CHG-14):** If `survey.maxResponses !== null`, count stored `Response` rows for `surveyId` inside the same transaction; if `count >= survey.maxResponses`, atomically update `Survey` setting `status = 'CLOSED'` and `closedAt = now` (satisfying `survey_closed_at_chk`).
+10. Commit and return `201`. Any error in steps 7–9 rolls back everything.
 
 **List own responses (FR-09)**: the caller's `Participation` rows joined with their surveys, including closed surveys, newest first, each with title, mode, effective status and `participatedDay`; for identified surveys also `responseId` and `submittedAt`.
 
@@ -81,7 +83,7 @@ An optional question may be left out of `answers`. An empty `answers` array is v
 | Rule | Application in F-03 | Database backstop |
 |---|---|---|
 | BR-01 | Step 5 check plus step 7 insert inside the transaction | Unique `(surveyId, respondentId)` on `Participation` and on `Response` |
-| BR-02 | Steps 3–4; browse filters on effective status; drafts are invisible (`404`) | – |
+| BR-02 | Steps 3–4 and step 9 (`FOR UPDATE` row lock + atomic auto-closure when `count >= maxResponses`); browse filters on effective status; drafts are invisible (`404`) | `survey_max_responses_chk`, `survey_closed_at_chk`, PostgreSQL row-level `FOR UPDATE` lock |
 | BR-06 | `validateAnswers` in `domain/validateAnswers.ts` before any insert | Unique `(responseId, questionId)`; rating 1–5 check; one-value check on `Answer` |
 | BR-07 | Every respondent query scoped by `respondentId` = caller; no respondent route returns summaries | – |
 | BR-08 | All routes use `requireRole('RESPONDENT')` | Enum `Role` |
@@ -99,6 +101,10 @@ An optional question may be left out of `answers`. An empty `answers` array is v
 | 20 parallel submissions by one respondent | 1 × `201`, 19 × `409` (NFR-06) |
 | Survey closed by the owner while a submission is in flight | Accepted if the submit transaction read the survey as open, rejected if it read it as closed (SDS Section 3.4) |
 | Survey id or response id that is not a UUID | `404` |
+| Submission reaching `maxResponses` | `201 Created`; survey atomically updated to `status = CLOSED`, `closedAt = now`; hidden from `/available-surveys`; redundant `POST /close` returns `409 INVALID_STATE_TRANSITION`; `/my-responses` preserved |
+| Submission after quota auto-closure | `409 SURVEY_NOT_OPEN`, nothing stored |
+| 10 parallel submissions by distinct respondents when `maxResponses = 1` | Exactly 1 × `201 Created` (auto-closes survey), 9 × `409 SURVEY_NOT_OPEN`, exact 1 `Response` and 1 `Participation` stored |
+| Unlimited survey (`maxResponses = null`) | Never auto-closes; behaves identically to Sprint 1 (`v0.1.0`) |
 
 ### 2.5 Permissions
 
@@ -114,8 +120,8 @@ An optional question may be left out of `answers`. An empty `answers` array is v
 
 | Screen | Behavior |
 |---|---|
-| `/available` | Cards with title, description excerpt, mode badge ("Identified"), number of questions. Surveys already answered show a "Responded" badge and a "View my submission" link instead of "Answer". Empty state: "No surveys are open for you right now." Skeleton while loading. |
-| `/available/:surveyId` | Title, description, questions in order: single-choice as a radio group, rating as five labelled radio buttons 1–5; required questions marked "Required". **Above the submit button**, a notice: "Identified survey: your answers are linked to your name and the survey owner can see them." "Submit" is disabled while sending. Client checks mirror Section 2.2 and highlight unanswered required questions. On `201`: confirmation panel "Response submitted on <date and time, Bangkok>" with a link to the submission. On `409 DUPLICATE_RESPONSE`: "You have already responded to this survey." with a link to the submission. On `409 SURVEY_NOT_OPEN`: "This survey is closed." On `400`: errors next to the questions. If `alreadyResponded` is true on load, the form is replaced by the "already responded" message. |
+| `/available` | Cards with title, description excerpt, mode badge ("Identified"), quota badge when `maxResponses !== null` (e.g., `"Limit: 30 responses"`), number of questions. Surveys already answered show a "Responded" badge and a "View my submission" link instead of "Answer". Empty state: "No surveys are open for you right now." Skeleton while loading. |
+| `/available/:surveyId` | Title, description, mode badge ("Identified"), quota badge when `maxResponses !== null` (e.g., `"Limit: 30 responses"`), questions in order: single-choice as a radio group, rating as five labelled radio buttons 1–5; required questions marked "Required". **Above the submit button**, a notice: "Identified survey: your answers are linked to your name and the survey owner can see them." "Submit" is disabled while sending. Client checks mirror Section 2.2 and highlight unanswered required questions. On `201`: confirmation panel "Response submitted on <date and time, Bangkok>" with a link to the submission. On `409 DUPLICATE_RESPONSE`: "You have already responded to this survey." with a link to the submission. On `409 SURVEY_NOT_OPEN`: "This survey is closed." On `400`: errors next to the questions. If `alreadyResponded` is true on load, the form is replaced by the "already responded" message. |
 | `/my-responses` | List of surveys answered: title, status (Published or Closed), day of participation; each links to the submission. Empty state: "You have not answered any surveys yet." |
 | `/my-responses/:surveyId` | Survey title, submission time (Bangkok), and each question with the chosen option or rating. `404` → "Submission not found." |
 
@@ -129,7 +135,7 @@ An optional question may be left out of `answers`. An empty `answers` array is v
 {
   "data": [
     { "id": "s1…", "title": "Seed: CPE334 Course Evaluation", "description": "…", "mode": "IDENTIFIED",
-      "questionCount": 2, "closeAt": null, "alreadyResponded": false }
+      "questionCount": 2, "maxResponses": 30, "closeAt": null, "alreadyResponded": false }
   ],
   "meta": { "page": 1, "pageSize": 20, "total": 1 }
 }
@@ -142,7 +148,7 @@ Errors: `400` (paging), `401`, `403`.
 ```json
 {
   "data": {
-    "id": "s1…", "title": "…", "description": "…", "mode": "IDENTIFIED", "alreadyResponded": false,
+    "id": "s1…", "title": "…", "description": "…", "mode": "IDENTIFIED", "maxResponses": 30, "alreadyResponded": false,
     "questions": [
       { "id": "q1…", "position": 1, "type": "SINGLE_CHOICE", "text": "How was the lab workload?", "required": true,
         "options": [ { "id": "o1…", "position": 1, "text": "Too light" }, { "id": "o2…", "position": 2, "text": "About right" }, { "id": "o3…", "position": 3, "text": "Too heavy" } ] },
@@ -214,10 +220,10 @@ Errors: `401`, `403`, `404`. The body never contains another user's id or displa
 
 | Item | Specification |
 |---|---|
-| Tables written | `Participation` (`surveyId`, `respondentId`, `participatedDay`), `Response` (`surveyId`, `mode`, `respondentId`, `submittedDay`, `submittedAt`), `Answer` (`responseId`, `questionId`, `ratingValue`), `AnswerSelection` (`answerId`, `optionId`) |
-| Tables read | `Survey`, `Question`, `Option` |
-| Migration | No change. All tables and constraints come from F-01's migrations |
-| Constraints relied on | Unique `(surveyId, respondentId)` on `Participation` and `Response`; composite FK `(surveyId, mode)`; `response_identity_by_mode_chk`; unique `(responseId, questionId)`; `answer_rating_range_chk`; `answer_single_value_chk`; `onDelete: Restrict` from responses and participations to the survey |
+| Tables written | `Participation` (`surveyId`, `respondentId`, `participatedDay`), `Response` (`surveyId`, `mode`, `respondentId`, `submittedDay`, `submittedAt`), `Answer` (`responseId`, `questionId`, `ratingValue`), `AnswerSelection` (`answerId`, `optionId`); conditionally updates `Survey` (`status = 'CLOSED'`, `closedAt = now`) when `maxResponses` is reached |
+| Tables read | `Survey` (including `maxResponses`, locked `FOR UPDATE` on submit), `Question`, `Option` |
+| Migration | Sprint 1 base schema from F-01's migrations (`0001`, `0002`); CHG-14 adds `0003_add_survey_max_responses` (`Survey.maxResponses Int?` + `survey_max_responses_chk`) |
+| Constraints relied on | Unique `(surveyId, respondentId)` on `Participation` and `Response`; composite FK `(surveyId, mode)`; `response_identity_by_mode_chk`; unique `(responseId, questionId)`; `answer_rating_range_chk`; `answer_single_value_chk`; `onDelete: Restrict` from responses and participations to the survey; `survey_max_responses_chk`; `survey_closed_at_chk`; PostgreSQL `FOR UPDATE` row lock on `Survey` |
 | Days | `participatedDay` and `submittedDay` are Asia/Bangkok calendar days from `calendarDay(now)` (D-14) |
 
 ---
@@ -384,6 +390,38 @@ Sprint 2 adds the case "close date reached" with F-05.
 - **When** resp3 opens `/my-responses`
 - **Then** the page shows "You have not answered any surveys yet."
 
+### AC-F03-10 — Survey auto-closes atomically at `maxResponses` with consistent post-closure effects (FR-03, FR-08, FR-09, FR-11, BR-02, BR-04, CHG-14)
+
+**Scenario: reaching quota auto-closes the survey**
+- **Given** owner1 publishes a survey S with `maxResponses = 2`
+- **When** resp1 submits a valid response to S
+- **Then** the response is `201 Created`, S remains `PUBLISHED` with `closedAt: null`, and S remains listed in `GET /api/v1/available-surveys`
+- **When** resp2 submits a valid response to S
+- **Then** the response is `201 Created`
+- **And** in the database S is atomically updated to `status = 'CLOSED'` with `closedAt` non-null
+- **And** S immediately disappears from `GET /api/v1/available-surveys` for resp3
+- **And** a subsequent `POST /api/v1/surveys/{S}/responses` by resp3 returns `409 SURVEY_NOT_OPEN` and stores 0 new `Participation` or `Response` rows
+- **And** a redundant `POST /api/v1/surveys/{S}/close` by owner1 returns `409 INVALID_STATE_TRANSITION`
+- **And** resp1 and resp2 still see S (with status `CLOSED`) in `GET /api/v1/my-responses` and can view their saved answers via `GET /api/v1/surveys/{S}/my-response`
+
+**Scenario: UI quota badge on available surveys and survey form**
+- **Given** S is open with `maxResponses: 30` and U is open with `maxResponses: null`
+- **When** resp3 opens `/available` and `/available/{S}`
+- **Then** S shows the quota badge `"Limit: 30 responses"` on both screens, while U shows no quota badge
+
+**Scenario: unlimited survey behavior preserved**
+- **Given** U is published with `maxResponses: null`
+- **When** respondents submit responses to U
+- **Then** U stays `PUBLISHED` with `closedAt: null` after submissions (identical to Sprint 1 `v0.1.0`)
+
+### AC-F03-11 — Concurrent submissions from distinct respondents racing for the final quota slot obey `maxResponses` (FR-03, BR-02, NFR-06, CHG-14)
+
+**Scenario: 10 parallel distinct respondents race on `maxResponses = 1`**
+- **Given** a published survey S with `maxResponses = 1` and 10 distinct active respondents who have not yet answered S
+- **When** all 10 respondents send valid `POST /api/v1/surveys/{S}/responses` requests simultaneously (`Promise.all`)
+- **Then** exactly `1` request receives `201 Created` (and triggers auto-closure) and `9` requests receive `409 SURVEY_NOT_OPEN`
+- **And** PostgreSQL holds exact `1` `Response` row and exact `1` `Participation` row for S, and S has `status = 'CLOSED'` with `closedAt` set
+
 ---
 
 ## 7. Software Test Specification
@@ -399,6 +437,8 @@ Sprint 2 adds the case "close date reached" with F-05.
 | TEST-F03-07 | AC-F03-07 | Unit (TDD) + API + DB | Unit: `validateAnswers` with S-PUB's structure. API: fixture S-PUB; a second survey for the accepted boundary cases | Unit: each problem row and each accepted row. API: submit each problem payload, then a valid payload; submit the two boundary payloads | Unit: expected issue paths, all problems in one result; accepted rows return no issues. API: `400` with the expected `details[].field` and 0 rows after each; the final valid submission `201`; boundary payloads `201` | `tests/unit/validateAnswers.test.ts`; `tests/integration/responses.test.ts` › "invalid answers", "boundaries" |
 | TEST-F03-08 | AC-F03-08 | API | resp1 submitted R and resp2 submitted R2 to S-PUB | resp2: `responses/{R}`, `my-response` for S-PUB, `my-responses` | `404` with no R answers and no resp1 id or name in the body; `my-response` returns R2's id; `my-responses` has 1 item, R2 | `tests/integration/my-responses.test.ts` › "cross-respondent" |
 | TEST-F03-09 | AC-F03-09 | API + E2E | resp1 answered S-PUB and T; T then closed; resp2 answered S-PUB; resp3 answered nothing | API: resp1 `GET /my-responses`. E2E: resp1 opens `/my-responses` and T; resp3 opens `/my-responses` | API: exactly 2 items with the expected statuses, Bangkok `participatedDay`, `responseId`, `submittedAt`; no resp2 data. E2E: "Closed" label, answers shown; empty-state text for resp3 | `tests/integration/my-responses.test.ts` › "list"; `tests/e2e/respondent-submit.spec.ts` › "my responses" |
+| TEST-F03-10 | AC-F03-10 | API + DB (TDD) + E2E | API/DB: published survey S with `maxResponses = 2`, unlimited survey U; resp1, resp2, resp3, owner1. E2E: capped and uncapped surveys | API/DB: resp1 submits, resp2 submits, check DB `Survey` (`CLOSED`, `closedAt`), resp3 checks `/available-surveys` & submits, owner1 sends `POST /close`, resp1/resp2 check `/my-responses` & `/my-response`; verify U stays `PUBLISHED`. E2E: verify `"Limit: M responses"` badge on `/available` and `/available/:surveyId` | 1st submit `201` (still `PUBLISHED`); 2nd submit `201` (DB `CLOSED`, `closedAt` set); hidden from `/available-surveys`; resp3 submit `409 SURVEY_NOT_OPEN` with 0 rows added; owner1 `POST /close` `409 INVALID_STATE_TRANSITION`; resp1/resp2 `/my-responses` shows `CLOSED` & `/my-response` returns answers; U stays `PUBLISHED`; E2E badge shown only when `maxResponses !== null` | `tests/integration/responses.test.ts` › "quota auto-closure"; `tests/integration/available-surveys.test.ts`; `tests/e2e/respondent-submit.spec.ts` |
+| TEST-F03-11 | AC-F03-11 | API + DB (TDD concurrency) | Fresh fixture: published survey S with `maxResponses = 1`; 10 distinct respondents who have not answered S | Fire 10 simultaneous `POST /surveys/{S}/responses` requests via `Promise.all`; inspect DB `Response`, `Participation`, `Survey` | Exactly `1` × `201 Created` and `9` × `409 SURVEY_NOT_OPEN`; DB holds exact `1` `Response` row and exact `1` `Participation` row, and `Survey.status = 'CLOSED'` with `closedAt` non-null | `tests/integration/nfr-concurrency.test.ts` › "quota concurrency" |
 
 Related NFR tests: TEST-NFR-01 (latency of browse, submit and own submission), TEST-NFR-04 (respondent screens), TEST-NFR-05 (respondent routes), TEST-NFR-06 (20 parallel submissions), TEST-NFR-07 (a response survives restart).
 
@@ -408,7 +448,7 @@ Related NFR tests: TEST-NFR-01 (latency of browse, submit and own submission), T
 
 The Product Definition of Done items D-1 to D-10 (`definition-of-done.md`) apply. In addition, F-03 is done when:
 
-- TEST-F03-01 to TEST-F03-09 pass on the PR head commit, with red-then-green commits recorded for TEST-F03-05, TEST-F03-06 and TEST-F03-07.
+- TEST-F03-01 to TEST-F03-11 pass on the PR head commit, with red-then-green commits recorded for TEST-F03-05, TEST-F03-06, TEST-F03-07, TEST-F03-10 and TEST-F03-11.
 - TEST-NFR-06 passes: 20 parallel submissions store exactly 1 response.
 - TEST-F01-05 (role matrix) and TEST-NFR-03 cover all F-03 routes.
 - The reviewer has checked in the PR that every respondent query filters by `respondentId` = caller, and that the submit path writes all rows inside one transaction.
