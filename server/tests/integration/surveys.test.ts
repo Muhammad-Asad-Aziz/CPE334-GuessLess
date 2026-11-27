@@ -715,4 +715,175 @@ describe('F-02 Owner Survey Lifecycle Integration Tests', () => {
       }
     );
   });
+
+  describe('TEST-F02-10: optional maxResponses validation, persistence & owner payloads (AC-F02-10, FR-01, FR-10, CHG-14)', () => {
+    it.each([
+      { label: 'omitted', includeKey: false, input: undefined, expected: null },
+      { label: 'null', includeKey: true, input: null, expected: null },
+      { label: '1', includeKey: true, input: 1, expected: 1 },
+      { label: '1000', includeKey: true, input: 1000, expected: 1000 },
+    ])(
+      'accepts maxResponses when $label and persists $expected in PostgreSQL',
+      async ({ includeKey, input, expected }) => {
+        const owner1 = await createUser({
+          email: `owner-quota-ok-${Math.random().toString(36).slice(2)}@example.edu`,
+          password: 'Password123!',
+          role: 'SURVEY_OWNER',
+        });
+        const token = await loginAs(owner1.email);
+
+        const body: Record<string, unknown> = {
+          title: 'Quota Boundary Survey',
+          questions: [{ type: 'RATING', text: 'Rate it', required: true }],
+        };
+        if (includeKey) {
+          body.maxResponses = input;
+        }
+
+        const res = await request(app)
+          .post('/api/v1/surveys')
+          .set('Authorization', `Bearer ${token}`)
+          .send(body);
+
+        expect(res.status).toBe(201);
+        expect(res.body.data.maxResponses).toBe(expected);
+
+        const dbSurvey = await prisma.survey.findUnique({ where: { id: res.body.data.id } });
+        expect(dbSurvey).not.toBeNull();
+        expect((dbSurvey as Record<string, unknown> | null)?.maxResponses).toBe(expected);
+      }
+    );
+
+    it.each([0, -1, 1001, 2.5, 'abc'])(
+      'rejects invalid maxResponses (%s) with 400 VALIDATION_ERROR naming maxResponses and writes 0 rows',
+      async (badValue) => {
+        const owner1 = await createUser({
+          email: `owner-quota-bad-${Math.random().toString(36).slice(2)}@example.edu`,
+          password: 'Password123!',
+          role: 'SURVEY_OWNER',
+        });
+        const token = await loginAs(owner1.email);
+
+        const res = await request(app)
+          .post('/api/v1/surveys')
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            title: 'Invalid Quota Survey',
+            maxResponses: badValue,
+            questions: [{ type: 'RATING', text: 'Rate it', required: true }],
+          });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        expect(res.body.error.details).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              field: 'maxResponses',
+            }),
+          ])
+        );
+        const quotaIssue = res.body.error.details.find((d: any) => d.field === 'maxResponses');
+        expect(quotaIssue?.issue).not.toBe('is not an allowed field');
+
+        const surveyCount = await prisma.survey.count();
+        expect(surveyCount).toBe(0);
+      }
+    );
+
+    it('propagates maxResponses across owner endpoints, enforces DB check constraint, and preserves BR-04 draft publish checks', async () => {
+      const owner1 = await createUser({
+        email: 'owner-quota-prop@example.edu',
+        password: 'Password123!',
+        role: 'SURVEY_OWNER',
+      });
+      const token = await loginAs(owner1.email);
+
+      // 1. Create capped survey (maxResponses: 5) and unlimited survey (omitted)
+      const cappedCreate = await request(app)
+        .post('/api/v1/surveys')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          title: 'Capped Survey',
+          maxResponses: 5,
+          questions: [{ type: 'RATING', text: 'Rate capped', required: true }],
+        });
+      expect(cappedCreate.status).toBe(201);
+      expect(cappedCreate.body.data.maxResponses).toBe(5);
+      const cappedId = cappedCreate.body.data.id as string;
+
+      const unlimitedCreate = await request(app)
+        .post('/api/v1/surveys')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          title: 'Unlimited Survey',
+          questions: [{ type: 'RATING', text: 'Rate unlimited', required: true }],
+        });
+      expect(unlimitedCreate.status).toBe(201);
+      expect(unlimitedCreate.body.data.maxResponses).toBeNull();
+      const unlimitedId = unlimitedCreate.body.data.id as string;
+
+      // 2. GET /surveys list includes maxResponses for both
+      const listRes = await request(app)
+        .get('/api/v1/surveys')
+        .set('Authorization', `Bearer ${token}`);
+      expect(listRes.status).toBe(200);
+      const cappedListItem = listRes.body.data.find((s: any) => s.id === cappedId);
+      const unlimitedListItem = listRes.body.data.find((s: any) => s.id === unlimitedId);
+      expect(cappedListItem?.maxResponses).toBe(5);
+      expect(unlimitedListItem?.maxResponses).toBeNull();
+
+      // 3. GET /surveys/:id includes maxResponses
+      const cappedGet = await request(app)
+        .get(`/api/v1/surveys/${cappedId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(cappedGet.status).toBe(200);
+      expect(cappedGet.body.data.maxResponses).toBe(5);
+
+      // 4. POST /publish and POST /close echo maxResponses
+      const cappedPublish = await request(app)
+        .post(`/api/v1/surveys/${cappedId}/publish`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+      expect(cappedPublish.status).toBe(200);
+      expect(cappedPublish.body.data.maxResponses).toBe(5);
+
+      const cappedClose = await request(app)
+        .post(`/api/v1/surveys/${cappedId}/close`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+      expect(cappedClose.status).toBe(200);
+      expect(cappedClose.body.data.maxResponses).toBe(5);
+
+      // 5. DB check constraint survey_max_responses_chk rejects 0 and 1001 directly in PostgreSQL
+      await expect(
+        prisma.$executeRaw`UPDATE "Survey" SET "maxResponses" = 0 WHERE id = ${cappedId}::uuid`
+      ).rejects.toThrow();
+      await expect(
+        prisma.$executeRaw`UPDATE "Survey" SET "maxResponses" = 1001 WHERE id = ${cappedId}::uuid`
+      ).rejects.toThrow();
+
+      // 6. BR-04 incomplete draft publish checks unchanged even with maxResponses set
+      const incompleteCapped = await request(app)
+        .post('/api/v1/surveys')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          title: '',
+          maxResponses: 5,
+          questions: [],
+        });
+      expect(incompleteCapped.status).toBe(201);
+      expect(incompleteCapped.body.data.maxResponses).toBe(5);
+
+      const publishIncomplete = await request(app)
+        .post(`/api/v1/surveys/${incompleteCapped.body.data.id}/publish`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+      expect(publishIncomplete.status).toBe(400);
+      expect(publishIncomplete.body.error.code).toBe('VALIDATION_ERROR');
+      expect(publishIncomplete.body.error.details).toEqual([
+        expect.objectContaining({ field: 'title' }),
+        expect.objectContaining({ field: 'questions' }),
+      ]);
+    });
+  });
 });

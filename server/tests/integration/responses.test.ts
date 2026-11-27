@@ -480,4 +480,225 @@ describe('F-03 Responses Integration Tests (TDD)', () => {
       expect(res.body.data.responseId).toBeDefined();
     });
   });
+
+  describe('TEST-F03-10: Quota Auto-Closure & Post-Closure Effects (AC-F03-10, FR-03, FR-08, FR-09, FR-11, BR-02, BR-04, CHG-14)', () => {
+    it('atomically closes survey at maxResponses = 2, hides from available-surveys, blocks resp3 and redundant close, and preserves /my-responses', async () => {
+      const ownerLogin = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: owner.email, password: 'Password1!' });
+      expect(ownerLogin.status).toBe(200);
+      const ownerToken = ownerLogin.body.data.token as string;
+
+      const resp2 = await createUser({
+        email: 'resp2-quota@example.edu',
+        password: 'Password1!',
+        role: 'RESPONDENT',
+      });
+      const resp3 = await createUser({
+        email: 'resp3-quota@example.edu',
+        password: 'Password1!',
+        role: 'RESPONDENT',
+      });
+
+      const resp2Login = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: resp2.email, password: 'Password1!' });
+      const resp2Token = resp2Login.body.data.token as string;
+
+      const resp3Login = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: resp3.email, password: 'Password1!' });
+      const resp3Token = resp3Login.body.data.token as string;
+
+      // Owner creates and publishes a survey with maxResponses = 2
+      const createRes = await request(app)
+        .post('/api/v1/surveys')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          title: 'Quota 2 Survey',
+          description: 'Closes automatically after 2 submissions.',
+          maxResponses: 2,
+          questions: [
+            {
+              type: 'SINGLE_CHOICE',
+              text: 'Pick one',
+              required: true,
+              options: [{ text: 'Opt A' }, { text: 'Opt B' }],
+            },
+            {
+              type: 'RATING',
+              text: 'Rate this',
+              required: true,
+            },
+          ],
+        });
+      expect(createRes.status).toBe(201);
+      const cappedSurvey = createRes.body.data;
+      const cappedId = cappedSurvey.id as string;
+      const cq1 = cappedSurvey.questions[0];
+      const cq2 = cappedSurvey.questions[1];
+
+      const pubRes = await request(app)
+        .post(`/api/v1/surveys/${cappedId}/publish`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({});
+      expect(pubRes.status).toBe(200);
+
+      // 1st submission (resp1): 201, survey stays PUBLISHED with closedAt null
+      const sub1 = await request(app)
+        .post(`/api/v1/surveys/${cappedId}/responses`)
+        .set('Authorization', `Bearer ${resp1Token}`)
+        .send({
+          answers: [
+            { questionId: cq1.id, optionIds: [cq1.options[0].id] },
+            { questionId: cq2.id, rating: 4 },
+          ],
+        });
+      expect(sub1.status).toBe(201);
+
+      const afterFirstDb = await prisma.survey.findUnique({ where: { id: cappedId } });
+      expect(afterFirstDb!.status).toBe('PUBLISHED');
+      expect(afterFirstDb!.closedAt).toBeNull();
+
+      // Still listed in GET /api/v1/available-surveys with maxResponses: 2
+      const browseMid = await request(app)
+        .get('/api/v1/available-surveys')
+        .set('Authorization', `Bearer ${resp2Token}`);
+      expect(browseMid.status).toBe(200);
+      const midItem = browseMid.body.data.find((s: any) => s.id === cappedId);
+      expect(midItem).toBeDefined();
+      expect(midItem.maxResponses).toBe(2);
+
+      // 2nd submission (resp2): 201, survey atomically transitions to CLOSED with closedAt set
+      const sub2 = await request(app)
+        .post(`/api/v1/surveys/${cappedId}/responses`)
+        .set('Authorization', `Bearer ${resp2Token}`)
+        .send({
+          answers: [
+            { questionId: cq1.id, optionIds: [cq1.options[1].id] },
+            { questionId: cq2.id, rating: 5 },
+          ],
+        });
+      expect(sub2.status).toBe(201);
+
+      const afterSecondDb = await prisma.survey.findUnique({ where: { id: cappedId } });
+      expect(afterSecondDb!.status).toBe('CLOSED');
+      expect(afterSecondDb!.closedAt).not.toBeNull();
+
+      // Hidden immediately from resp3's /available-surveys; /available-surveys/:id returns 409 SURVEY_NOT_OPEN
+      const browseAfter = await request(app)
+        .get('/api/v1/available-surveys')
+        .set('Authorization', `Bearer ${resp3Token}`);
+      expect(browseAfter.status).toBe(200);
+      expect(browseAfter.body.data.some((s: any) => s.id === cappedId)).toBe(false);
+
+      const formAfter = await request(app)
+        .get(`/api/v1/available-surveys/${cappedId}`)
+        .set('Authorization', `Bearer ${resp3Token}`);
+      expect(formAfter.status).toBe(409);
+      expect(formAfter.body.error.code).toBe('SURVEY_NOT_OPEN');
+
+      // 3rd submission (resp3) rejected with 409 SURVEY_NOT_OPEN; 0 new rows created
+      const sub3 = await request(app)
+        .post(`/api/v1/surveys/${cappedId}/responses`)
+        .set('Authorization', `Bearer ${resp3Token}`)
+        .send({
+          answers: [
+            { questionId: cq1.id, optionIds: [cq1.options[0].id] },
+            { questionId: cq2.id, rating: 3 },
+          ],
+        });
+      expect(sub3.status).toBe(409);
+      expect(sub3.body.error.code).toBe('SURVEY_NOT_OPEN');
+
+      expect(await prisma.response.count({ where: { surveyId: cappedId } })).toBe(2);
+      expect(await prisma.participation.count({ where: { surveyId: cappedId } })).toBe(2);
+      expect(
+        await prisma.participation.count({ where: { surveyId: cappedId, respondentId: resp3.id } })
+      ).toBe(0);
+
+      // Redundant manual close returns 409 INVALID_STATE_TRANSITION
+      const redundantClose = await request(app)
+        .post(`/api/v1/surveys/${cappedId}/close`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({});
+      expect(redundantClose.status).toBe(409);
+      expect(redundantClose.body.error.code).toBe('INVALID_STATE_TRANSITION');
+
+      // resp1 & resp2 still see survey in /my-responses (CLOSED) and can retrieve own answers
+      for (const token of [resp1Token, resp2Token]) {
+        const myList = await request(app)
+          .get('/api/v1/my-responses')
+          .set('Authorization', `Bearer ${token}`);
+        expect(myList.status).toBe(200);
+        const item = myList.body.data.find((r: any) => r.surveyId === cappedId);
+        expect(item).toBeDefined();
+        expect(item.status).toBe('CLOSED');
+
+        const myDetail = await request(app)
+          .get(`/api/v1/surveys/${cappedId}/my-response`)
+          .set('Authorization', `Bearer ${token}`);
+        expect(myDetail.status).toBe(200);
+        expect(myDetail.body.data.answers).toHaveLength(2);
+      }
+    });
+
+    it('keeps unlimited surveys (maxResponses = null) open across submissions', async () => {
+      const ownerLogin = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: owner.email, password: 'Password1!' });
+      const ownerToken = ownerLogin.body.data.token as string;
+
+      const resp2 = await createUser({
+        email: 'resp2-unlim@example.edu',
+        password: 'Password1!',
+        role: 'RESPONDENT',
+      });
+      const resp2Login = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ email: resp2.email, password: 'Password1!' });
+      const resp2Token = resp2Login.body.data.token as string;
+
+      const createRes = await request(app)
+        .post('/api/v1/surveys')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          title: 'Unlimited Survey',
+          questions: [{ type: 'RATING', text: 'Rate unlimited', required: true }],
+        });
+      expect(createRes.status).toBe(201);
+      expect(createRes.body.data.maxResponses).toBeNull();
+      const unlimId = createRes.body.data.id as string;
+      const uq = createRes.body.data.questions[0];
+
+      await request(app)
+        .post(`/api/v1/surveys/${unlimId}/publish`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({});
+
+      const s1 = await request(app)
+        .post(`/api/v1/surveys/${unlimId}/responses`)
+        .set('Authorization', `Bearer ${resp1Token}`)
+        .send({ answers: [{ questionId: uq.id, rating: 4 }] });
+      expect(s1.status).toBe(201);
+
+      const s2 = await request(app)
+        .post(`/api/v1/surveys/${unlimId}/responses`)
+        .set('Authorization', `Bearer ${resp2Token}`)
+        .send({ answers: [{ questionId: uq.id, rating: 5 }] });
+      expect(s2.status).toBe(201);
+
+      const dbSurvey = await prisma.survey.findUnique({ where: { id: unlimId } });
+      expect(dbSurvey!.status).toBe('PUBLISHED');
+      expect(dbSurvey!.closedAt).toBeNull();
+
+      const availRes = await request(app)
+        .get('/api/v1/available-surveys')
+        .set('Authorization', `Bearer ${resp1Token}`);
+      expect(availRes.status).toBe(200);
+      const found = availRes.body.data.find((s: any) => s.id === unlimId);
+      expect(found).toBeDefined();
+      expect(found.maxResponses).toBeNull();
+    });
+  });
 });

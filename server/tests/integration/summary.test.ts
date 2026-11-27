@@ -465,4 +465,194 @@ describe('F-04 Aggregate Survey Results Summary Integration Tests', () => {
       }
     });
   });
+
+  describe('TEST-F04-05: summary includes maxResponses and preserves accurate aggregates after quota auto-closure (AC-F04-05, FR-04, BR-05, BR-07, CHG-14)', () => {
+    it('returns maxResponses and accurate aggregates after auto-closure while preserving 403/404 guards', async () => {
+      const owner1 = await createUser({
+        email: 'owner1-quota-sum@example.edu',
+        displayName: 'Owner One',
+        password: 'Password123!',
+        role: 'SURVEY_OWNER',
+      });
+      const owner2 = await createUser({
+        email: 'owner2-quota-sum@example.edu',
+        displayName: 'Owner Two',
+        password: 'Password123!',
+        role: 'SURVEY_OWNER',
+      });
+      const resp1 = await createUser({
+        email: 'resp1-quota-sum@example.edu',
+        displayName: 'Respondent One',
+        password: 'Password123!',
+        role: 'RESPONDENT',
+      });
+      const resp2 = await createUser({
+        email: 'resp2-quota-sum@example.edu',
+        displayName: 'Respondent Two',
+        password: 'Password123!',
+        role: 'RESPONDENT',
+      });
+      const admin1 = await createUser({
+        email: 'admin1-quota-sum@example.edu',
+        displayName: 'Admin One',
+        password: 'Password123!',
+        role: 'ADMIN',
+      });
+
+      const owner1Token = await loginAs(owner1.email);
+      const owner2Token = await loginAs(owner2.email);
+      const resp1Token = await loginAs(resp1.email);
+      const resp2Token = await loginAs(resp2.email);
+      const adminToken = await loginAs(admin1.email);
+
+      const createCapped = await request(app)
+        .post('/api/v1/surveys')
+        .set('Authorization', `Bearer ${owner1Token}`)
+        .send({
+          title: 'Quota Auto-Closed Summary Survey',
+          maxResponses: 2,
+          questions: [
+            {
+              type: 'SINGLE_CHOICE',
+              text: 'How was the lab workload?',
+              required: true,
+              options: [
+                { text: 'Too light' },
+                { text: 'About right' },
+                { text: 'Too heavy' },
+              ],
+            },
+            {
+              type: 'RATING',
+              text: 'Rate the course overall',
+              required: true,
+            },
+          ],
+        });
+      expect(createCapped.status).toBe(201);
+      const cappedSurvey = createCapped.body.data;
+      const q1 = cappedSurvey.questions[0];
+      const q2 = cappedSurvey.questions[1];
+      const [optLight, optRight, optHeavy] = q1.options;
+
+      const pubCapped = await request(app)
+        .post(`/api/v1/surveys/${cappedSurvey.id}/publish`)
+        .set('Authorization', `Bearer ${owner1Token}`)
+        .send({});
+      expect(pubCapped.status).toBe(200);
+
+      // Submit 2 responses via API to auto-close
+      const sub1 = await request(app)
+        .post(`/api/v1/surveys/${cappedSurvey.id}/responses`)
+        .set('Authorization', `Bearer ${resp1Token}`)
+        .send({
+          answers: [
+            { questionId: q1.id, optionIds: [optRight.id] },
+            { questionId: q2.id, rating: 4 },
+          ],
+        });
+      expect(sub1.status).toBe(201);
+
+      const sub2 = await request(app)
+        .post(`/api/v1/surveys/${cappedSurvey.id}/responses`)
+        .set('Authorization', `Bearer ${resp2Token}`)
+        .send({
+          answers: [
+            { questionId: q1.id, optionIds: [optHeavy.id] },
+            { questionId: q2.id, rating: 5 },
+          ],
+        });
+      expect(sub2.status).toBe(201);
+
+      const summaryRes = await request(app)
+        .get(`/api/v1/surveys/${cappedSurvey.id}/summary`)
+        .set('Authorization', `Bearer ${owner1Token}`);
+
+      expect(summaryRes.status).toBe(200);
+      expect(summaryRes.body.data).toEqual({
+        surveyId: cappedSurvey.id,
+        title: 'Quota Auto-Closed Summary Survey',
+        status: 'CLOSED',
+        totalResponses: 2,
+        maxResponses: 2,
+        suppressed: false,
+        suppressionReason: null,
+        questions: [
+          {
+            questionId: q1.id,
+            position: 1,
+            text: 'How was the lab workload?',
+            type: 'SINGLE_CHOICE',
+            answered: 2,
+            options: [
+              { optionId: optLight.id, text: 'Too light', count: 0, percent: 0 },
+              { optionId: optRight.id, text: 'About right', count: 1, percent: 50 },
+              { optionId: optHeavy.id, text: 'Too heavy', count: 1, percent: 50 },
+            ],
+          },
+          {
+            questionId: q2.id,
+            position: 2,
+            text: 'Rate the course overall',
+            type: 'RATING',
+            answered: 2,
+            mean: 4.5,
+            distribution: { '1': 0, '2': 0, '3': 0, '4': 1, '5': 1 },
+          },
+        ],
+      });
+
+      const serialized = JSON.stringify(summaryRes.body);
+      for (const sensitive of [
+        resp1.id,
+        resp2.id,
+        resp1.displayName,
+        resp2.displayName,
+        resp1.email,
+        resp2.email,
+        owner1.id,
+      ]) {
+        expect(serialized).not.toContain(sensitive);
+      }
+
+      // Unlimited survey returns maxResponses: null
+      const createUnlim = await request(app)
+        .post('/api/v1/surveys')
+        .set('Authorization', `Bearer ${owner1Token}`)
+        .send({
+          title: 'Unlimited Summary Survey',
+          questions: [{ type: 'RATING', text: 'Rate unlimited', required: true }],
+        });
+      expect(createUnlim.status).toBe(201);
+      const unlimId = createUnlim.body.data.id as string;
+
+      await request(app)
+        .post(`/api/v1/surveys/${unlimId}/publish`)
+        .set('Authorization', `Bearer ${owner1Token}`)
+        .send({});
+
+      const unlimSummaryRes = await request(app)
+        .get(`/api/v1/surveys/${unlimId}/summary`)
+        .set('Authorization', `Bearer ${owner1Token}`);
+      expect(unlimSummaryRes.status).toBe(200);
+      expect(unlimSummaryRes.body.data.maxResponses).toBeNull();
+
+      // Access guards: owner2 -> 404 NOT_FOUND; resp1 and admin1 -> 403 FORBIDDEN
+      const otherOwnerRes = await request(app)
+        .get(`/api/v1/surveys/${cappedSurvey.id}/summary`)
+        .set('Authorization', `Bearer ${owner2Token}`);
+      expect(otherOwnerRes.status).toBe(404);
+      expect(otherOwnerRes.body.error.code).toBe('NOT_FOUND');
+      expect(JSON.stringify(otherOwnerRes.body)).not.toContain('Quota Auto-Closed Summary Survey');
+
+      for (const token of [resp1Token, adminToken]) {
+        const forbiddenRes = await request(app)
+          .get(`/api/v1/surveys/${cappedSurvey.id}/summary`)
+          .set('Authorization', `Bearer ${token}`);
+        expect(forbiddenRes.status).toBe(403);
+        expect(forbiddenRes.body.error.code).toBe('FORBIDDEN');
+        expect(forbiddenRes.body.data).toBeUndefined();
+      }
+    });
+  });
 });
