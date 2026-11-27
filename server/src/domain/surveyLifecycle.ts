@@ -37,10 +37,6 @@ export type SurveyChangeResult = 'ALLOWED' | 'SURVEY_LOCKED';
 export function publishChecks(survey: SurveyForPublishChecks): PublishCheckFailure[] {
   const failures: PublishCheckFailure[] = [];
 
-  if (survey.title.trim().length === 0) {
-    failures.push({ field: 'title', issue: 'must not be empty to publish' });
-  }
-
   if (survey.questions.length === 0) {
     failures.push({ field: 'questions', issue: 'at least 1 question is required to publish' });
     return failures;
