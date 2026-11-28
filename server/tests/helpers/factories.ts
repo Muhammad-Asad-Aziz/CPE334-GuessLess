@@ -37,6 +37,7 @@ export async function createSurvey(
     mode?: 'IDENTIFIED' | 'ANONYMOUS';
     status?: 'DRAFT' | 'PUBLISHED' | 'CLOSED';
     eligibility?: 'ALL' | 'SELECTED';
+    maxResponses?: number | null;
     publishedAt?: Date | null;
     closeAt?: Date | null;
     closedAt?: Date | null;
@@ -61,6 +62,7 @@ export async function createSurvey(
       mode: overrides.mode || 'IDENTIFIED',
       status,
       eligibility: overrides.eligibility || 'ALL',
+      maxResponses: overrides.maxResponses ?? null,
       publishedAt: status === 'DRAFT' ? null : publishedAt,
       closeAt: overrides.closeAt || null,
       closedAt: status === 'CLOSED' ? closedAt : null,
@@ -83,6 +85,7 @@ export async function createSurveyWithQuestions(
     mode?: 'IDENTIFIED' | 'ANONYMOUS';
     status?: 'DRAFT' | 'PUBLISHED' | 'CLOSED';
     eligibility?: 'ALL' | 'SELECTED';
+    maxResponses?: number | null;
     publishedAt?: Date | null;
     closeAt?: Date | null;
     closedAt?: Date | null;
@@ -118,6 +121,7 @@ export async function createSurveyWithQuestions(
       mode: overrides.mode || 'IDENTIFIED',
       status,
       eligibility: overrides.eligibility || 'ALL',
+      maxResponses: overrides.maxResponses ?? null,
       publishedAt: status === 'DRAFT' ? null : publishedAt,
       closeAt: overrides.closeAt || null,
       closedAt: status === 'CLOSED' ? closedAt : null,

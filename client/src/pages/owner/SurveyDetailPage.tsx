@@ -336,7 +336,14 @@ export const SurveyDetailPage: React.FC = () => {
           <div>
             <dt className="text-xs font-medium text-gray-500">Responses</dt>
             <dd className="mt-1 font-semibold text-gray-900 tabular-nums">
-              {survey.responseCount}
+              {survey.maxResponses !== null ? (
+                `${survey.responseCount} / ${survey.maxResponses}`
+              ) : (
+                <span>
+                  {survey.responseCount}{' '}
+                  <span className="text-xs font-normal text-gray-500">Unlimited</span>
+                </span>
+              )}
             </dd>
           </div>
           <div>

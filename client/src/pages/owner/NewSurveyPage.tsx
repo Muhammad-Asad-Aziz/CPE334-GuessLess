@@ -26,6 +26,8 @@ interface DraftQuestion {
 
 const MAX_TITLE_LENGTH = 120;
 const MAX_DESCRIPTION_LENGTH = 1000;
+const MIN_MAX_RESPONSES = 1;
+const MAX_MAX_RESPONSES = 1000;
 const MAX_QUESTIONS = 30;
 const MAX_QUESTION_TEXT_LENGTH = 300;
 const MAX_OPTIONS_PER_QUESTION = 10;
@@ -43,6 +45,8 @@ export const NewSurveyPage: React.FC = () => {
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [maxResponsesInput, setMaxResponsesInput] = useState('');
+  const [maxResponsesBadInput, setMaxResponsesBadInput] = useState(false);
   const [questions, setQuestions] = useState<DraftQuestion[]>([]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [apiError, setApiError] = useState<ApiClientError | null>(null);
@@ -151,6 +155,19 @@ export const NewSurveyPage: React.FC = () => {
     if (description.length > MAX_DESCRIPTION_LENGTH) {
       errors.description = `Description must be at most ${MAX_DESCRIPTION_LENGTH} characters.`;
     }
+    const trimmedMaxResponses = maxResponsesInput.trim();
+    if (maxResponsesBadInput) {
+      errors.maxResponses = 'Response limit must be a whole number from 1 to 1,000.';
+    } else if (trimmedMaxResponses.length > 0) {
+      const parsedMax = Number(trimmedMaxResponses);
+      if (
+        !Number.isInteger(parsedMax) ||
+        parsedMax < MIN_MAX_RESPONSES ||
+        parsedMax > MAX_MAX_RESPONSES
+      ) {
+        errors.maxResponses = 'Response limit must be a whole number from 1 to 1,000.';
+      }
+    }
     if (questions.length > MAX_QUESTIONS) {
       errors.questions = `A survey can have at most ${MAX_QUESTIONS} questions.`;
     }
@@ -207,10 +224,12 @@ export const NewSurveyPage: React.FC = () => {
     setIsSubmitting(true);
 
     try {
+      const trimmedMaxResponses = maxResponsesInput.trim();
       const payload = {
         title: title.trim(),
         description,
         mode: 'IDENTIFIED' as const,
+        maxResponses: trimmedMaxResponses === '' ? null : Number(trimmedMaxResponses),
         questions: questions.map((q) =>
           q.type === 'SINGLE_CHOICE'
             ? {
@@ -357,6 +376,48 @@ export const NewSurveyPage: React.FC = () => {
               {description.length}/{MAX_DESCRIPTION_LENGTH}
             </span>
           </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label htmlFor="survey-max-responses" className="block text-sm font-medium text-gray-900">
+            Response limit (optional, 1–1000)
+          </label>
+          <p id="survey-max-responses-hint" className="text-xs text-gray-500">
+            Leave blank for unlimited responses. When the limit is reached, the survey closes automatically.
+          </p>
+          <input
+            id="survey-max-responses"
+            name="maxResponses"
+            type="number"
+            inputMode="numeric"
+            min={MIN_MAX_RESPONSES}
+            max={MAX_MAX_RESPONSES}
+            step={1}
+            placeholder="Unlimited"
+            data-field-key="maxResponses"
+            value={maxResponsesInput}
+            onChange={(e) => {
+              setMaxResponsesInput(e.target.value);
+              setMaxResponsesBadInput(e.target.validity.badInput);
+              clearFieldError('maxResponses');
+            }}
+            aria-invalid={Boolean(fieldErrors.maxResponses)}
+            aria-describedby={
+              fieldErrors.maxResponses
+                ? 'survey-max-responses-hint survey-max-responses-error'
+                : 'survey-max-responses-hint'
+            }
+            className="block w-full sm:max-w-xs rounded-md border border-gray-400 px-3 py-2.5 text-base text-gray-900 focus:border-[#006B3C] focus:outline-none focus:ring-2 focus:ring-[#006B3C]"
+          />
+          {fieldErrors.maxResponses && (
+            <p
+              id="survey-max-responses-error"
+              role="alert"
+              className="text-xs text-red-700 font-medium"
+            >
+              {fieldErrors.maxResponses}
+            </p>
+          )}
         </div>
 
         <section aria-labelledby="questions-heading" className="space-y-4 pt-2 border-t border-gray-200">

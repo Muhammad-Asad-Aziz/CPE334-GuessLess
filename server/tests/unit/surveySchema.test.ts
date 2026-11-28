@@ -359,4 +359,48 @@ describe('Survey Create / Save-Draft Schema (TEST-F02-01, AC-F02-01)', () => {
       ).toBe(true);
     }
   });
+
+  describe('Survey maxResponses Validation (TEST-F02-10, AC-F02-10, CHG-14)', () => {
+    it('accepts omitted maxResponses as unlimited', () => {
+      const res = createSurveySchema.safeParse(validBaseRequest);
+      expect(res.success).toBe(true);
+      if (res.success) {
+        const parsed = res.data as Record<string, unknown>;
+        expect(parsed.maxResponses ?? null).toBeNull();
+      }
+    });
+
+    it.each([null, 1, 1000])(
+      'accepts valid maxResponses value %s',
+      (value) => {
+        const res = createSurveySchema.safeParse({
+          ...validBaseRequest,
+          maxResponses: value,
+        });
+        expect(res.success).toBe(true);
+        if (res.success) {
+          const parsed = res.data as Record<string, unknown>;
+          expect(parsed.maxResponses).toBe(value);
+        }
+      }
+    );
+
+    it.each([0, -1, 1001, 2.5, 'abc'])(
+      'rejects invalid maxResponses value %s on field maxResponses',
+      (value) => {
+        const res = createSurveySchema.safeParse({
+          ...validBaseRequest,
+          maxResponses: value,
+        });
+        expect(res.success).toBe(false);
+        if (!res.success) {
+          expect(
+            res.error.issues.some(
+              (i) => i.path.join('.') === 'maxResponses' && i.code !== 'unrecognized_keys'
+            )
+          ).toBe(true);
+        }
+      }
+    );
+  });
 });

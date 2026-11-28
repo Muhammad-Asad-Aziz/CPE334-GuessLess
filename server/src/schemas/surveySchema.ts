@@ -70,6 +70,13 @@ export const createSurveySchema = z
     title: z.string().trim().max(120, 'must be at most 120 characters').default(''),
     description: z.string().max(1000, 'must be at most 1000 characters').default(''),
     mode: surveyModeSchema,
+    maxResponses: z
+      .number({ invalid_type_error: 'must be an integer between 1 and 1000' })
+      .int('must be an integer between 1 and 1000')
+      .min(1, 'must be between 1 and 1000')
+      .max(1000, 'must be between 1 and 1000')
+      .nullable()
+      .optional(),
     questions: z
       .array(questionInputSchema)
       .max(30, 'must have at most 30 questions')

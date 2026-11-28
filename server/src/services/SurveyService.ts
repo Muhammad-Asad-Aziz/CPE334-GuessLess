@@ -31,6 +31,7 @@ export interface SurveyDetailDto {
   mode: ResponseMode;
   status: SurveyStatus;
   eligibility: Eligibility;
+  maxResponses: number | null;
   createdAt: string;
   publishedAt: string | null;
   closeAt: string | null;
@@ -44,6 +45,7 @@ export interface SurveyListItemDto {
   title: string;
   status: SurveyStatus;
   responseCount: number;
+  maxResponses: number | null;
   createdAt: string;
   publishedAt: string | null;
   closeAt: string | null;
@@ -86,6 +88,7 @@ function toSurveyDetailDto(
     mode: survey.mode,
     status: effectiveStatus(survey, now),
     eligibility: survey.eligibility,
+    maxResponses: survey.maxResponses,
     createdAt: survey.createdAt.toISOString(),
     publishedAt: survey.publishedAt ? survey.publishedAt.toISOString() : null,
     closeAt: survey.closeAt ? survey.closeAt.toISOString() : null,
@@ -130,6 +133,7 @@ export class SurveyService {
           mode: 'IDENTIFIED',
           status: 'DRAFT',
           eligibility: 'ALL',
+          maxResponses: input.maxResponses ?? null,
           questions: {
             create: input.questions.map((question, qIndex) => ({
               position: qIndex + 1,
@@ -199,6 +203,7 @@ export class SurveyService {
         title: survey.title,
         status: effectiveStatus(survey, now),
         responseCount: countsBySurvey.get(survey.id) ?? 0,
+        maxResponses: survey.maxResponses,
         createdAt: survey.createdAt.toISOString(),
         publishedAt: survey.publishedAt ? survey.publishedAt.toISOString() : null,
         closeAt: survey.closeAt ? survey.closeAt.toISOString() : null,

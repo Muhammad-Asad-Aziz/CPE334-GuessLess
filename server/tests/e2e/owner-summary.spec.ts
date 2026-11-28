@@ -251,4 +251,133 @@ test.describe('F-04 Owner Aggregate Summary E2E', () => {
       await cleanupSurveyAndUsers(draftSurvey.id, []);
     }
   });
+
+  test('TEST-F04-05 (E2E): displays quota header Total responses: N / M on auto-closed capped survey summary', async ({
+    page,
+  }, testInfo) => {
+    const owner1 = await prisma.user.findUnique({ where: { email: 'owner1@example.edu' } });
+    expect(owner1).toBeTruthy();
+
+    const suffix = `${testInfo.project.name}-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`;
+    const passwordHash = await bcrypt.hash(SEED_PASSWORD, 4);
+    const respondents = await Promise.all(
+      [1, 2].map((idx) =>
+        prisma.user.create({
+          data: {
+            email: `e2e-quota-sum-r${idx}-${suffix}@example.edu`,
+            displayName: `E2E Quota Sum Resp ${idx}`,
+            passwordHash,
+            role: 'RESPONDENT',
+            isActive: true,
+          },
+        })
+      )
+    );
+
+    const survey = await prisma.survey.create({
+      data: {
+        ownerId: owner1!.id,
+        title: `E2E Quota Summary ${suffix}`,
+        description: 'Auto-closed quota summary survey.',
+        mode: 'IDENTIFIED',
+        status: 'CLOSED',
+        eligibility: 'ALL',
+        maxResponses: 2,
+        publishedAt: new Date('2025-01-01T00:00:00.000Z'),
+        closedAt: new Date('2025-01-01T01:00:00.000Z'),
+        questions: {
+          create: [
+            {
+              position: 1,
+              type: 'SINGLE_CHOICE',
+              text: 'How was the lab workload?',
+              required: true,
+              options: {
+                create: [
+                  { position: 1, text: 'Too light' },
+                  { position: 2, text: 'About right' },
+                  { position: 3, text: 'Too heavy' },
+                ],
+              },
+            },
+            {
+              position: 2,
+              type: 'RATING',
+              text: 'Rate the course overall',
+              required: true,
+            },
+          ],
+        },
+      },
+      include: {
+        questions: {
+          orderBy: { position: 'asc' },
+          include: { options: { orderBy: { position: 'asc' } } },
+        },
+      },
+    });
+
+    const userIds = respondents.map((u) => u.id);
+
+    try {
+      const q1 = survey.questions[0];
+      const q2 = survey.questions[1];
+      const optRight = q1.options[1];
+      const optHeavy = q1.options[2];
+
+      const submittedAt = new Date();
+      const dayDate = new Date(`${calendarDay(submittedAt)}T00:00:00.000Z`);
+
+      const payloads = [
+        { respondentId: respondents[0].id, optionId: optRight.id, ratingValue: 4 },
+        { respondentId: respondents[1].id, optionId: optHeavy.id, ratingValue: 5 },
+      ];
+
+      for (const item of payloads) {
+        await prisma.$transaction(async (tx) => {
+          await tx.participation.create({
+            data: {
+              surveyId: survey.id,
+              respondentId: item.respondentId,
+              participatedDay: dayDate,
+            },
+          });
+          await tx.response.create({
+            data: {
+              surveyId: survey.id,
+              mode: 'IDENTIFIED',
+              respondentId: item.respondentId,
+              submittedDay: dayDate,
+              submittedAt,
+              answers: {
+                create: [
+                  {
+                    questionId: q1.id,
+                    selections: { create: [{ optionId: item.optionId }] },
+                  },
+                  {
+                    questionId: q2.id,
+                    ratingValue: item.ratingValue,
+                  },
+                ],
+              },
+            },
+          });
+        });
+      }
+
+      await loginAs(page, 'owner1@example.edu');
+      await page.goto(`/my-surveys/${survey.id}/summary`);
+
+      await expect(page.locator('h1')).toContainText(survey.title);
+      await expect(page.locator('body')).toContainText('Closed');
+      await expect(page.locator('body')).toContainText('Total responses: 2 / 2');
+      await expect(page.locator('body')).toContainText('About right — 1 (50.0%)');
+      await expect(page.locator('body')).toContainText('Too heavy — 1 (50.0%)');
+      await expect(page.locator('body')).toContainText('Average 4.50 from 2 answers');
+      await assertNoHorizontalOverflow(page);
+    } finally {
+      await cleanupSurveyAndUsers(survey.id, userIds);
+    }
+  });
 });

@@ -2,8 +2,8 @@
 
 **Product:** Survey and Feedback System (Theme 10: Review, Feedback, and Survey System)
 **Course:** CPE 334 Introduction to Software Engineering in the Age of AI Agents, Semester 1/2026
-**File:** `docs/system-sds.md` | **Version:** 1.0 (approved baseline) | **Date:** 12 November 2026
-**Requirements baseline:** `docs/srs.md` v1.0
+**File:** `docs/system-sds.md` | **Version:** 1.1 (CHG-14: optional response quota & auto-closure) | **Date:** 27 November 2026
+**Requirements baseline:** `docs/srs.md` v1.1
 
 | Role | Name | Student ID |
 |---|---|---|
@@ -20,6 +20,7 @@
 | 0.2 | 2026-11-06 | Al Xander James Codino Ybanez (Author 2) | Corrected the reference for the no-refresh-token decision (DD-06); SRS follow-ups S-1 to S-3 applied in SRS v0.2 |
 | 0.3 | 2026-11-07 | Muhammad Asad Aziz (Author 1, AI-assisted review) | Aligned with SRS v0.3: incomplete drafts and `publishChecks` (BR-04); effective status used everywhere and close date frozen after close; Asia/Bangkok calendar days; anonymous results only after close (BR-14) and Known limits corrected (`xmin`, logs); BR-03 database enforcement labelled partial; `GET /my-responses` and respondent routes; Sprint 2 screens; error codes `SURVEY_NOT_PUBLISHED` and `RATE_LIMITED`; `DB_PASSWORD`, `TEST_DATABASE_URL` and throttling variables; `BCRYPT_COST` start-up rule; NFR-01 benchmark data set; login throttling design (NFR-11); migrations as a Cloud Run Job; DD-12 to DD-18 |
 | 1.0 | 2026-11-12 | Muhammad Asad Aziz & Al Xander James Codino Ybanez | Partner review complete; all technology stack choices (Section 2) and design decisions (DD-01 to DD-18, Section 12) resolved; aligned with `docs/srs.md` v1.0; approved as v1.0 baseline |
+| 1.1 | 2026-11-27 | Muhammad Asad Aziz & Al Xander James Codino Ybanez | Aligned with `docs/srs.md` v1.1 (Lab 7 CHG-14, Issue #42): updated Section 3.3 (BR-02, BR-04) and Section 3.4 submit flow (parameterized `SELECT ... FOR UPDATE` row lock + atomic quota auto-closure); added `Survey.maxResponses Int?` and expand-only migration `0003_add_survey_max_responses` (`survey_max_responses_chk`) in Sections 4.1–4.4; updated Section 5.4 payloads and Sections 8.1–8.2 UI specifications; added DD-19 |
 ---
 
 ## 1. Introduction
@@ -132,9 +133,9 @@ Request flow: route -> `authenticate` -> `requireRole` -> `validate` (Zod) -> se
 | Rule | Application enforcement | Database enforcement |
 |---|---|---|
 | BR-01 One response per respondent per survey | `ResponseService.submit` creates the participation record first inside a transaction. A unique-constraint error is mapped to 409 `DUPLICATE_RESPONSE` | Unique `(surveyId, respondentId)` on `Participation` and on `Response` |
-| BR-02 Only open surveys accept responses | `effectiveStatus(survey, now)` is evaluated inside the submit transaction; `DRAFT` is invisible to respondents (404), an effectively closed survey gives 409 `SURVEY_NOT_OPEN`. Every list and query filters on the effective status (Section 4.5) | - |
+| BR-02 Only open surveys accept responses | Inside the submit transaction, `ResponseService.submitResponse` locks the target `Survey` row (`SELECT id FROM "Survey" WHERE id = $1::uuid FOR UPDATE`) and evaluates `effectiveStatus(survey, now)`; `DRAFT` is invisible to respondents (404), an effectively closed survey gives 409 `SURVEY_NOT_OPEN`. After inserting the response rows, if `survey.maxResponses !== null` and the transaction's stored `Response` count reaches `survey.maxResponses`, it atomically sets `status = 'CLOSED'` and `closedAt = now`. Every list and query filters on the effective status (Section 4.5) | `survey_max_responses_chk` (`CHECK ("maxResponses" IS NULL OR "maxResponses" BETWEEN 1 AND 1000)`); PostgreSQL row-level `FOR UPDATE` lock serializes concurrent quota submissions |
 | BR-03 Questions immutable after publication | `SurveyService.update` allows only title and description when status is not `DRAFT`, plus close date and eligibility while the survey is effectively open; question and mode changes are refused (409 `SURVEY_LOCKED`) | Partial only: the composite foreign key with `onUpdate: Restrict` stops the mode from changing once responses exist, and `onDelete: Restrict` from `Answer` stops answered questions from being deleted. Other question and option changes are blocked by the service only |
-| BR-04 Lifecycle and publish checks | `canTransition(from, to)` and `publishChecks(survey, now)` in `domain/surveyLifecycle.ts`. Drafts may be saved incomplete (D-15); `publishChecks` returns every failed check. Transitions are decided on the effective status, so closing a survey whose close date has passed gives 409 `INVALID_STATE_TRANSITION` | Check constraints: `publishedAt` is set exactly when status is not `DRAFT`; `closedAt` is set exactly when status is `CLOSED` |
+| BR-04 Lifecycle and publish checks | `canTransition(from, to)` and `publishChecks(survey, now)` in `domain/surveyLifecycle.ts`. Drafts may be saved incomplete (D-15); `publishChecks` returns every failed check. `PUBLISHED -> CLOSED` transitions occur via manual owner close (`SurveyService.close`) or atomically via `ResponseService.submitResponse` when `maxResponses` is reached (both setting `status = 'CLOSED'` and `closedAt = now`). Transitions are decided on the effective status, so closing a survey after quota auto-closure or whose close date has passed gives 409 `INVALID_STATE_TRANSITION` | Check constraints: `publishedAt` is set exactly when status is not `DRAFT`; `closedAt` is set exactly when status is `CLOSED` (`survey_closed_at_chk`, satisfied by both manual close and quota auto-closure); `survey_max_responses_chk` |
 | BR-05 Owner acts only on own surveys | Every owner query is scoped with `where { id, ownerId: currentUser.id }`; no match gives 404 | Foreign key `Survey.ownerId` |
 | BR-06 Response completely valid | `validateAnswers(survey, answers)` in `domain/validateAnswers.ts`; whole submission rejected with 400 and nothing stored | Unique `(responseId, questionId)`; rating check constraint 1-5; one-value check on `Answer` |
 | BR-07 Respondent reads only own response | Respondent queries (`my-responses`, `my-response`, `responses/{responseId}`) are scoped by `respondentId = currentUser.id`; no respondent route reaches summaries | - |
@@ -157,19 +158,27 @@ sequenceDiagram
   C->>M: POST /api/v1/surveys/SURVEY_ID/responses with Bearer token and answers
   M->>M: verify JWT, check token not revoked, load active user, require role RESPONDENT
   M->>S: validated request body
-  S->>D: BEGIN, read survey, questions, options, eligibility
-  S->>S: open? eligible? answers valid? (BR-02, BR-09, BR-06)
+  S->>D: BEGIN; SELECT id FROM "Survey" WHERE id = $1::uuid FOR UPDATE
+  S->>D: read survey (incl. maxResponses), questions, options, eligibility
+  S->>S: DRAFT->404; CLOSED->409 SURVEY_NOT_OPEN; existing Participation->409 DUPLICATE_RESPONSE; validateAnswers->400 (BR-02, BR-09, BR-06)
   S->>D: INSERT participation (unique per survey and respondent)
   alt unique violation
     D-->>S: constraint error
     S-->>C: 409 DUPLICATE_RESPONSE, transaction rolled back
   else accepted
-    S->>D: INSERT response, answers, selections, then COMMIT
+    S->>D: INSERT response, answers, selections
+    opt survey.maxResponses !== null
+      S->>D: COUNT(*) stored responses for surveyId
+      alt count >= survey.maxResponses
+        S->>D: UPDATE "Survey" SET status = 'CLOSED', closedAt = now
+      end
+    end
+    S->>D: COMMIT
     S-->>C: 201 confirmation
   end
 ```
 
-A submission racing with a "close" request is accepted if its transaction read the survey as open, and rejected if it read it as closed. Both outcomes are consistent.
+A submission racing with a "close" request is accepted if its transaction acquires the `Survey` row lock while the survey is open, and rejected with `409 SURVEY_NOT_OPEN` if it runs after the close commits. Under concurrent submissions from distinct respondents racing for the final quota slot (for example, 10 parallel respondents when `maxResponses = 1`), the `FOR UPDATE` row lock serializes the transactions: exactly 1 commits `201 Created` and sets `status = 'CLOSED'` and `closedAt = now`, while the remaining 9 observe `CLOSED` after acquiring the lock and return `409 SURVEY_NOT_OPEN`, storing exact 1 `Response` and 1 `Participation`.
 
 ---
 
@@ -210,6 +219,7 @@ erDiagram
     enum mode
     enum status
     enum eligibility
+    int maxResponses "NULL = unlimited"
     datetime publishedAt
     datetime closeAt
     datetime closedAt
@@ -268,7 +278,7 @@ erDiagram
 | Entity | Purpose | Ownership link | Notes |
 |---|---|---|---|
 | User | Account with one role | - | Created by seed only (SRS D-02). Accounts are disabled, never deleted |
-| Survey | Survey with title, status, mode, eligibility, optional close date | `ownerId` -> User | The title may be empty while `DRAFT` (D-15). Mode is fixed from publication (BR-03). `closedAt` is set only by a manual close; a close by date is derived from `closeAt` (Section 4.5) |
+| Survey | Survey with title, status, mode, eligibility, optional response quota (`maxResponses`: 1–1,000 or `NULL`), optional close date | `ownerId` -> User | The title may be empty while `DRAFT` (D-15). Mode is fixed from publication (BR-03). `closedAt` is set on manual close (FR-11) or quota auto-closure (CHG-14, DD-19); a close by scheduled date is derived from `closeAt` (Section 4.5) |
 | Question | Ordered question of one survey | via Survey | Type: single-choice, rating (Sprint 1); multiple-choice, free-text (Sprint 2). Editing a draft replaces the whole question set in one transaction, which avoids temporary conflicts on the unique `(surveyId, position)` (DD-17) |
 | Option | Choice of a choice question | via Question | 0-10 per choice question in a draft; 2-10 to publish |
 | Response | One submitted set of answers | `respondentId` -> User (IDENTIFIED only) | `NULL` respondent and `NULL` timestamp when ANONYMOUS |
@@ -343,10 +353,11 @@ model Survey {
   description String       @default("") @db.VarChar(1000)
   mode        ResponseMode @default(IDENTIFIED)
   status      SurveyStatus @default(DRAFT)
-  eligibility Eligibility  @default(ALL)
-  publishedAt DateTime?
-  closeAt     DateTime?
-  closedAt    DateTime?                              // set only by a manual close (FR-11)
+  eligibility  Eligibility  @default(ALL)
+  maxResponses Int?                                  // optional response quota 1-1000; NULL = unlimited (CHG-14)
+  publishedAt  DateTime?
+  closeAt      DateTime?
+  closedAt     DateTime?                             // set by manual close (FR-11) or quota auto-close (CHG-14)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
@@ -486,7 +497,7 @@ ALTER TABLE "Survey" ADD CONSTRAINT survey_published_at_chk CHECK (
   OR ("status" <> 'DRAFT' AND "publishedAt" IS NOT NULL)
 );
 
--- A manual close time exists exactly when the stored status is CLOSED (BR-04).
+-- A close time exists exactly when the stored status is CLOSED (BR-04, CHG-14 manual or quota auto-close).
 -- A survey closed by its close date keeps status PUBLISHED and closedAt NULL (DD-14).
 ALTER TABLE "Survey" ADD CONSTRAINT survey_closed_at_chk CHECK (
   ("status" = 'CLOSED') = ("closedAt" IS NOT NULL)
@@ -495,9 +506,14 @@ ALTER TABLE "Survey" ADD CONSTRAINT survey_closed_at_chk CHECK (
 -- Positions start at 1
 ALTER TABLE "Question" ADD CONSTRAINT question_position_chk CHECK ("position" >= 1);
 ALTER TABLE "Option"   ADD CONSTRAINT option_position_chk   CHECK ("position" >= 1);
+
+-- Optional response quota 1-1000; NULL means unlimited (CHG-14, migration 0003_add_survey_max_responses)
+ALTER TABLE "Survey" ADD COLUMN "maxResponses" INTEGER;
+ALTER TABLE "Survey" ADD CONSTRAINT survey_max_responses_chk
+  CHECK ("maxResponses" IS NULL OR "maxResponses" BETWEEN 1 AND 1000);
 ```
 
-Rules that need data from several tables (an answer's question belongs to the response's survey; a choice belongs to the answered question; single-choice has exactly one selection) are enforced in `validateAnswers` and covered by tests. They are not enforced by database triggers. The publish checks of BR-04 are application rules only, because a draft is allowed to be incomplete (D-15).
+Migration `0003_add_survey_max_responses` is expand-only: adding a nullable column defaults existing rows to `NULL` (unlimited), preserving zero-downtime deployment and rollback safety (Sections 4.7 and 10.5). Rules that need data from several tables (an answer's question belongs to the response's survey; a choice belongs to the answered question; single-choice has exactly one selection) are enforced in `validateAnswers` and covered by tests. They are not enforced by database triggers. The publish checks of BR-04 are application rules only, because a draft is allowed to be incomplete (D-15).
 
 ### 4.5 Queries and performance
 
@@ -630,6 +646,24 @@ Anonymous surveys: `GET /surveys/{id}/my-response` returns only `{ "participated
 
 ### 5.4 Example payloads
 
+**Create survey** `POST /api/v1/surveys` (`maxResponses` is optional; `null` or omitted means unlimited; integer 1–1,000 sets a quota).
+
+```json
+{
+  "title": "Lab feedback",
+  "description": "Week 10 lab",
+  "mode": "IDENTIFIED",
+  "maxResponses": 30,
+  "questions": [
+    { "type": "SINGLE_CHOICE", "text": "Was the lab clear?", "required": true,
+      "options": [ { "text": "Yes" }, { "text": "No" } ] },
+    { "type": "RATING", "text": "Rate the lab", "required": true }
+  ]
+}
+```
+
+Owner survey endpoints (`POST /surveys`, `GET /surveys`, `GET /surveys/{id}`, `POST /surveys/{id}/publish`, `POST /surveys/{id}/close`, `GET /surveys/{id}/summary`) and respondent survey endpoints (`GET /available-surveys`, `GET /available-surveys/{id}`) all include `"maxResponses": number | null`.
+
 **Login** `POST /api/v1/auth/login`
 
 ```json
@@ -671,6 +705,7 @@ For an `ANONYMOUS` survey the response is `{ "data": { "surveyId": "s1-id", "sub
   "data": {
     "surveyId": "s1-id",
     "totalResponses": 12,
+    "maxResponses": 30,
     "suppressed": false,
     "suppressionReason": null,
     "questions": [
@@ -766,14 +801,14 @@ After login the SPA redirects by role. The navigation bar shows only the links o
 |---|---|---|---|
 | `/` | Redirect to the role's home screen, or to `/login` | Any | 1 |
 | `/login` | Login | Public | 1 |
-| `/available` | Available surveys (with "already responded" indicator) | Respondent | 1 |
-| `/available/:surveyId` | Survey form with response-mode notice, and submission confirmation | Respondent | 1 |
+| `/available` | Available surveys (with "already responded" indicator and quota badge `"Limit: N responses"` when `maxResponses !== null`) | Respondent | 1 |
+| `/available/:surveyId` | Survey form with response-mode notice, quota badge when `maxResponses !== null` (`"Limit: N responses"`), and submission confirmation | Respondent | 1 |
 | `/my-responses` | My responses: surveys answered, including closed ones, with participation day | Respondent | 1 |
 | `/my-responses/:surveyId` | My submission: answers and time (anonymous surveys: participation day only, from Sprint 2) | Respondent | 1 |
-| `/my-surveys` | My surveys (effective status, response count, dates, actions) | Survey Owner | 1 |
-| `/my-surveys/new` | Survey builder; incomplete drafts can be saved (multiple-choice, free-text and anonymous mode added in Sprint 2) | Survey Owner | 1 |
-| `/my-surveys/:surveyId` | Survey detail with publish (failed checks listed) and close; delete draft from Sprint 2 | Survey Owner | 1 |
-| `/my-surveys/:surveyId/summary` | Aggregate summary; date filter and CSV export from Sprint 3 | Survey Owner | 1 |
+| `/my-surveys` | My surveys (effective status, response count and quota `responseCount / maxResponses` or `"Unlimited"`, dates, actions) | Survey Owner | 1 |
+| `/my-surveys/new` | Survey builder with optional numeric input `"Response limit (optional, 1–1000)"` (blank = unlimited); incomplete drafts can be saved (multiple-choice, free-text and anonymous mode added in Sprint 2) | Survey Owner | 1 |
+| `/my-surveys/:surveyId` | Survey detail with quota (`responseCount / maxResponses` or `"Unlimited"`), publish (failed checks listed) and close; delete draft from Sprint 2 | Survey Owner | 1 |
+| `/my-surveys/:surveyId/summary` | Aggregate summary showing `"Total responses: N / M"` when capped or `"Total responses: N"` when unlimited; date filter and CSV export from Sprint 3 | Survey Owner | 1 |
 | `/my-surveys/:surveyId/edit` | Edit draft; after publication title and description, plus close date while open | Survey Owner | 2 |
 | `/my-surveys/:surveyId/eligibility` | Eligibility: all Respondents or a selected list | Survey Owner | 2 |
 | `/my-surveys/:surveyId/responses` | Individual responses (identified surveys only) | Survey Owner | 3 |
@@ -793,6 +828,7 @@ After login the SPA redirects by role. The navigation bar shows only the links o
 | Accessibility basics | Labels on all inputs, keyboard-operable controls, visible focus, sufficient contrast; checked by an automated scan and a keyboard-only journey (NFR-12) |
 | Navigation bar | Shows the display name and role from `/auth/me` (FR-07), the links of that role only, and a Logout button (FR-06) |
 | Dates and times | Shown in Asia/Bangkok time; calendar days follow D-14. An empty draft title is shown as "Untitled survey" |
+| Response quota (CHG-14) | Builder validates optional integer 1–1,000 (blank = unlimited); owner list/detail show `responseCount / maxResponses` or `"Unlimited"`; summary shows `"Total responses: N / M"` or `"Total responses: N"`; respondent screens show `"Limit: M responses"` badge when capped |
 
 ---
 
@@ -969,6 +1005,7 @@ Status: **Resolved** = agreed and fixed by both authors.
 | DD-16 | Server-owned fields in a request body are rejected with 400 (Zod strict) instead of being ignored | Clear, testable behavior; a client bug or tampering attempt is visible instead of silently dropped (BR-08) | Resolved |
 | DD-17 | Editing a draft replaces its whole question set in one transaction | Avoids temporary conflicts on the unique question and option positions; safe because drafts have no answers | Resolved |
 | DD-18 | Login throttling uses an in-memory counter per instance | No extra infrastructure; with at most 2 Cloud Run instances the limit stays within 20 attempts per minute (NFR-11) | Resolved |
+| DD-19 | Quota auto-closure (CHG-14, SRS D-19) acquires a PostgreSQL row lock (`SELECT id FROM "Survey" WHERE id = $1::uuid FOR UPDATE`) inside `ResponseService.submitResponse`, inserts `Participation`/`Response`/`Answer`/`AnswerSelection`, counts stored responses in the same transaction, and atomically sets `status = 'CLOSED'` and `closedAt = now` when `count >= maxResponses`. Schema uses expand-only migration `0003_add_survey_max_responses` (`Survey.maxResponses Int?` + `survey_max_responses_chk`). | Row-level locking serializes concurrent final-slot submissions without oversubscription (10 parallel respondents on `maxResponses = 1` yield 1×201 and 9×409). Updating stored status to `CLOSED` with `closedAt` satisfies `survey_closed_at_chk`, immediately hides the survey from `GET /available-surveys`, blocks redundant manual close with `409 INVALID_STATE_TRANSITION`, requires no background job (consistent with DD-07), and keeps rollback safe via nullable `NULL` defaults. | Resolved |
 
 **Follow-ups for the SRS (applied in SRS v0.2).**
 
